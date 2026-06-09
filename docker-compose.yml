@@ -1,0 +1,50 @@
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: acadmind-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/acadmind_dev_password
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  neo4j-init:
+    image: neo4j:5.26-community
+    container_name: acadmind-neo4j-init
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    volumes:
+      - ./backend/scripts/init_neo4j.cypher:/init.cypher:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        cypher-shell -a bolt://neo4j:7687 -u neo4j -p acadmind_dev_password -f /init.cypher || true
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    container_name: acadmind-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  neo4j_data:
+  redis_data:
