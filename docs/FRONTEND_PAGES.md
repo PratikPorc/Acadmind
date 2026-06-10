@@ -4,28 +4,31 @@
 
 ---
 
-## Product overview
+## Product Overview
 
 **AcadMind** is an AI-powered campus platform for **Techno India University**. It has two separate portals:
 
-| Portal | Route | Brand name | Primary user |
+| Portal | Route | Brand Name | Primary User |
 |--------|-------|------------|--------------|
 | Faculty | `/faculty` | **Campus Manager** | Teachers / faculty |
-| Student | `/student` | **DigiCampus** | Students |
+| Student | `/student` | **Scholar Portal** | Students |
 
-Both portals share the same dark theme and design language but use different accent colors (violet vs sky blue).
+*Note: The Student brand name is loaded dynamically from `frontend/src/lib/branding.ts` as `STUDENT_PORTAL_NAME`.*
+
+Both portals share the same elegant light theme and design language but use different subtle accent colors (violet vs sky/teal blue) to differentiate user roles.
 
 **Core features:**
-- Faculty creates batches, subjects, and campus announcements (notices, exams, assignments, file uploads)
-- Faculty adds students to batches by **12-digit institutional Student ID**
-- Students see a campus feed, enrolled batches, and an AI assistant that answers questions from batch data
-- Jarvis (student only) — screenshot upload for future OCR/event extraction (currently stub)
+- Faculty creates batches, subjects, and campus notices categorized into Academic, Cultural, Technical, and Global.
+- Faculty assigns students to batches by their **12-digit institutional Student ID**.
+- Students view campus notices filtered by Academic (subjects they are enrolled in), Cultural, Technical, and Global categories.
+- Students can filter notices in a sidebar by specific subjects, clubs, or technical domains.
+- ASK Jarvis — a RAG-powered query assistant that allows students to query the campus knowledge graph conversationally.
 
-**Important:** There is **no “Switch portal” button** in headers. Users enter via the landing page (`/`) and pick Faculty or Student.
+**Important:** There is **no “Switch portal” button** in authenticated headers. Users enter via the landing page (`/`) and choose their portal.
 
 ---
 
-## Tech stack (constraints for redesign)
+## Tech Stack (Constraints for Redesign)
 
 | Layer | Choice |
 |-------|--------|
@@ -40,55 +43,54 @@ Design deliverables should map to **React components** and remain **mobile-respo
 
 ---
 
-## Design system (current)
+## Design System (Premium Light Theme)
 
-### Theme
-- **Mode:** Dark only
-- **Page background:** `#08080d`
-- **Surface / cards:** `#12121a` → `#1a1a26` with `border-zinc-800`
-- **Primary text:** `#e4e4e7` (zinc-100)
-- **Muted text:** `#71717a` (zinc-500/600)
-- **Font:** Inter, system-ui
+To eliminate any "slop AI" vibe, we avoid over-saturated neon colors, heavy card shadows, and floating glow effects. The design should resemble high-end developer and productivity tools (e.g., Linear, Notion, or Stripe) with clean spacing, sharp alignments, thin borders, and subtle interactive states.
 
-### Accent colors
+### Core Theme Colors
+- **Page Background:** `#F8FAFC` (slate-50) — clean, soft off-white canvas.
+- **Surface / Cards:** `#FFFFFF` (white) — clear containment of information.
+- **Borders:** `#E2E8F0` (slate-200) — thin, low-contrast separator lines.
+- **Primary Text:** `#0F172A` (slate-900) — high-contrast charcoal for titles and labels.
+- **Muted Text:** `#64748B` (slate-500) — soft gray for secondary info, timestamps, and placeholders.
+- **Font:** Inter (body text), Outfit (headlines).
+
+### Accents
 | Token | Hex / Tailwind | Usage |
 |-------|----------------|-------|
-| Faculty accent | `#a78bfa` / violet-400 | Faculty labels, batch codes, links |
-| Student accent | `#38bdf8` / sky-400 | Student labels, batch codes |
-| Primary action | `#6366f1` / indigo-600 | Buttons, active tabs |
-| Success | `#34d399` / emerald-400 | Success messages, ok status |
-| Warning | `#fbbf24` / amber-400 | Due dates, profile errors |
-| Error | red-400 | Form/API errors |
+| Faculty Accent | `#7C3AED` / violet-600 | Faculty labels, batch codes, headers |
+| Student Accent | `#0284C7` / sky-600 | Student labels, batch codes, navigation |
+| Primary Action | `#4F46E5` / indigo-600 | Primary buttons, active tabs |
+| Success | `#10B981` / emerald-600 | Success messages, online/ok status |
+| Warning | `#D97706` / amber-600 | Due dates, urgent alerts |
+| Error | `#EF4444` / red-600 | Form and API errors |
 
-### Reusable patterns
-- **Card:** Rounded 2xl, border `zinc-800`, bg `zinc-900/80`, optional backdrop blur
-- **Input (`.input-dark`):** Rounded xl, border `zinc-700`, bg `zinc-800/80`, focus border indigo-500
-- **Pill badges:** Rounded-full, semi-transparent colored backgrounds by type (exam, assignment, notice, resource)
-- **Sticky header:** `zinc-900/90` + backdrop blur, bottom border `zinc-800`
-
-### Feed item type colors
-| Type | Badge color |
-|------|-------------|
-| exam | Red |
-| assignment | Amber |
-| resource | Emerald |
-| notice | Sky |
-| default | Indigo |
+### Reusable Patterns
+- **Card:** Rounded xl (`rounded-xl`), border `slate-200`, background `white`, elevated with a subtle shadow (`shadow-sm`).
+- **Input:** Rounded lg (`rounded-lg`), border `slate-300`, background `white`, focus border `indigo-500` with light blue outline ring.
+- **Pill Badges:** Rounded-full, high-density colors with very low-saturation, light backgrounds for high readability:
+  - **Academic:** `#EEF2F6` bg, `#475569` text (slate)
+  - **Cultural:** `#FDF2F8` bg, `#BE185D` text (fuchsia)
+  - **Technical:** `#ECFEFF` bg, `#0E7490` text (cyan)
+  - **Global:** `#F0FDF4` bg, `#15803D` text (green)
+  - **Exam:** `#FEE2E2` bg, `#B91C1C` text (red)
+  - **Assignment:** `#FEF3C7` bg, `#B45309` text (amber)
+- **Header:** Sticky `white` with bottom border `slate-200`, backdrop blur effect where content scrolls behind.
 
 ---
 
-## Route map
+## Route Map
 
 ```
 /                    → Landing Page (portal picker)
 /faculty             → Faculty Auth OR Faculty Dashboard
-/faculty/*           → Same (no nested routes yet; state-driven views)
+/faculty/*           → Same (state-driven dashboard views)
 /student             → Student Auth OR Student Dashboard
 /student/*           → Same (tab-based views)
 *                    → Redirect to /
 ```
 
-Authenticated views are **not separate URLs** — they are gated by Supabase session and in-app state (batch detail, tabs).
+Authenticated views are managed inside their respective portal root pages (`/faculty` and `/student`) using React state.
 
 ---
 
@@ -99,395 +101,156 @@ Authenticated views are **not separate URLs** — they are gated by Supabase ses
 **Auth:** None
 
 ### Purpose
-Entry point. User chooses Faculty or Student portal.
+Entry point for TIU students and faculty to select their respective portals.
 
-### Layout
-- Full viewport, centered content
-- Institution label: “Techno India University”
-- Hero title: **AcadMind** (gradient indigo → violet)
-- Subtitle: “AI-powered campus platform — notices, deadlines, resources & intelligent Q&A”
-
-### Main content
-Two large clickable cards (2-column grid on sm+):
-
-| Card | Link | Title | Subtitle | Accent |
-|------|------|-------|----------|--------|
-| Faculty | `/faculty` | Campus Manager | Batches · subjects · announcements · resources | Violet hover glow |
-| Student | `/student` | DigiCampus | Feed · deadlines · AI assistant · Jarvis | Sky hover glow |
-
-### Footer note
-“Open both portals in separate tabs to test faculty & student in parallel”
-
-### States
-- Static only (no loading/error)
+### Layout & Style
+- Clean, centered grid layout with generous vertical padding.
+- Institution Label: "Techno India University" in small, uppercase tracking-wide slate-500.
+- Hero Title: **AcadMind** in large, bold Outfit font (deep charcoal `#0F172A`).
+- Subtitle: "Knowledge graph campus platform — academic, cultural & technical notices with RAG-powered ASK Jarvis" (medium slate-600).
+- Portal Selection: Two large, side-by-side interactive cards (`max-w-xl` total grid).
+  - **Faculty Card:**
+    - Label: "Faculty" (violet-600)
+    - Title: "Campus Manager"
+    - Subtitle: "Batches · subjects · academic, cultural & technical notices"
+    - Hover: Soft violet border shift and minimal slate shadow increase.
+  - **Student Card:**
+    - Label: "Student" (sky-600)
+    - Title: "Scholar Portal"
+    - Subtitle: "Campus feed · subjects & events · ASK Jarvis RAG"
+    - Hover: Soft sky blue border shift.
+- Footer Note: "Open both portals in separate tabs to test faculty & student in parallel" (slate-400).
 
 ---
 
-## Screen 2 — Auth (Sign in / Sign up)
+## Screen 2 — Auth (Sign In / Sign Up)
 
-**Route:** `/faculty` or `/student` (when not logged in)  
+**Route:** `/faculty` or `/student` (when unauthenticated)  
 **File:** `frontend/src/components/AuthPage.tsx`  
-**Auth:** Supabase email/password; signup via backend auto-confirm (no email verification step)
+**Auth:** Supabase email/password; signup uses auto-confirmation.
 
-### Purpose
-Login or register. Same component, different copy and fields based on portal.
-
-### Layout
-- Full viewport centered card (`max-w-md`)
-- Portal label: “Faculty Portal” (violet) or “Student Portal” (sky)
-- Title toggles: “Sign in” / “Create account”
-- Subtitle differs by portal
-
-### Controls
-1. **Mode toggle:** Sign in | Sign up (segmented control)
-2. **Sign up fields (both):** Full name, Email, Password (min 6)
-3. **Sign up — student only:**
-   - Student ID: exactly **12 digits** (e.g. `231003003137`), numeric input with live counter `X/12`
-   - Semester (default “VI”), Branch (default “CSE”)
-4. **Submit button:** Full width, indigo
-
-### Messages
-- Error: red text (validation, API errors)
-- Success (signup): green text — student reminded to share ID with faculty; auto sign-in after signup
-
-### Faculty vs student copy
-| | Faculty | Student |
-|---|---------|---------|
-| Subtitle | Manage batches & campus announcements | Access notices, deadlines & AI assistant |
-| Extra fields | None | Student ID, semester, branch |
-
-### States
-- Loading: button “Please wait…”
-- Validation: 12-digit ID required for student signup
+### Layout & Style
+- Centered card (`max-w-md`) on soft grey background canvas.
+- Portal identity label: "Faculty Portal" (violet-600) or "Scholar Portal" (sky-600).
+- Mode Selector: Segmented controls (Sign in / Create account) with a clean white/grey layout.
+- Fields:
+  - Sign up: Full Name, Email, Password.
+  - Student Sign up extra fields:
+    - Student ID: exactly **12 digits** (numeric with live counter `X/12`).
+    - Semester (default "VI"), Branch (default "CSE").
+- Submit Button: Full-width indigo-600 button with a clean hover state.
+- Validation and messages shown in clear, clean red (errors) or emerald (success).
 
 ---
 
 ## Screen 3 — Faculty Dashboard
 
 **Route:** `/faculty` (authenticated)  
-**File:** `frontend/src/pages/FacultyApp.tsx` → `FacultyDashboard`
+**File:** `frontend/src/pages/FacultyApp.tsx`
 
-### Purpose
-Main faculty hub: post announcements, manage batches, view campus feed.
+### Header
+- Sticky, thin border, shadowless white bar.
+- Left: "AcadMind · Faculty" (violet-600) + "Campus Manager" title.
+- Right: Health Status badge (emerald, amber, or red dots) + User Menu (user name, "faculty" role badge, and Sign Out button).
 
-### Header (sticky)
-| Left | Right |
-|------|-------|
-| “AcadMind · Faculty” (violet) | System status badge |
-| “Campus Manager” (h1) | User menu (name, role badge, sign out) |
-
-### Profile error banner (conditional)
-Amber alert with “Retry” if profile load fails.
-
-### Main sections (top → bottom)
-
-#### 3a. Post Composer
-**Component:** `PostComposer.tsx`  
-Facebook-style announcement creation.
-
-| Element | Description |
-|---------|-------------|
-| Title | “Create announcement” |
-| Subtitle | DigiCampus-style — notices, exams, assignments & resources |
-| Batch select | Required dropdown |
-| Subject select | Required; loads when batch selected |
-| Textarea | Notice body (optional if file attached) |
-| Upload button | Always visible; opens file picker |
-| Post button | Publishes to selected batch + subject |
-
-**Validation:** Must select batch + subject; need text OR file.
-
-#### 3b. Two-column layout (lg: 3 + 2)
-
-**Left — Your batches** (`BatchGrid.tsx`)
-- “+ New batch” button (violet)
-- Grid of batch cards OR empty state (“No batches yet…”)
-- Each card: code, name, semester, branch, subject count, student count
-- Click card → Batch Detail view
-
-**Right — Campus feed** (`CampusFeed.tsx`, faculty API)
-- List of recent announcements across faculty’s batches
-- Refreshes when a new post is published
-
-### Modal — Create Batch
-**Component:** `CreateBatchModal.tsx`  
-Overlay modal with fields: Name, Code, Semester, Branch. Cancel / Create.
-
-### States
-- Loading batches
-- Empty batches
-- API errors (red text)
+### Main Content (Grid layout)
+1. **Post Composer (`PostComposer.tsx`):**
+   - Labeled "Post campus notice".
+   - Category selector buttons: **Academic**, **Cultural**, **Technical**, **Global**.
+   - Input dropdowns change contextually based on category selection:
+     - *Academic:* Dropdown for Batch selection and Subject selection.
+     - *Cultural:* Dropdown for Batch and Club selection (e.g. Dance Club, Music Club).
+     - *Technical:* Dropdown for Batch and Technical Domain selection (e.g. AI & ML, Web Dev).
+     - *Global:* Dropdown for Batch and Global Scope (Academic, Cultural, Technical).
+   - Textarea: Clean box to write notice contents. Placeholder text changes dynamically with the selected category.
+   - Submit: Labeled "Post notice".
+2. **Two-Column Dashboard Grid:**
+   - **Left Column (Your Batches):** Labeled "+ New batch". A grid of batch cards showing Code, Name, Semester, Branch, and student/subject counts. Clicking a batch card launches the Batch Detail view.
+   - **Right Column (Campus Feed):** Shows the recent feed items posted by the faculty. Divided into sections by category.
 
 ---
 
 ## Screen 4 — Faculty Batch Detail
 
-**Route:** `/faculty` (in-app; `selectedBatchId` state)  
+**Route:** `/faculty` (in-app state `selectedBatchId`)  
 **File:** `frontend/src/components/BatchDetail.tsx`
 
 ### Purpose
-Manage one batch: view notices, subjects, and students.
+Manage subjects, view notices, and link student enrollments.
 
-### Navigation
-- “← Back to dashboard” link (violet)
-
-### Batch header
-- Code (uppercase label)
-- Batch name (h2)
-- Meta: semester · branch · subject count · student count
-
-### Tabs
-| Tab | Content |
-|-----|---------|
-| **Notices** | List of posts for this batch (type badge, subject, due date, content/file) |
-| **Subjects** | Subject list + “Add subject” form (name, code) |
-| **Students** | Enrollment ID list + add/remove student |
-
-### Students tab (important)
-- **List:** Each row shows 12-digit Student ID (mono font) + **Remove** button (with confirm dialog)
-- **Add form:** Full 12-digit ID input, digit counter, disabled until 12 digits
-- Help text: linking ID connects student to batch for feed + AI queries
-
-### States
-- Loading batch
-- Empty posts / subjects / students
-- Error banner (red)
+### Layout
+- Nav link: "← Back to dashboard" in violet.
+- Batch Header: Upper-case code, descriptive name, and semester/branch statistics.
+- Tab selector:
+  - **Notices:** Vertical timeline of notices posted to this batch (displays category badges, content, and dates).
+  - **Subjects:** Grid of subjects and form to add a new subject (code, name).
+  - **Students:** List of linked 12-digit student IDs with confirmation dialog to remove them, plus an "Add student by ID" form (with numeric-only input and counter).
 
 ---
 
 ## Screen 5 — Student Dashboard
 
 **Route:** `/student` (authenticated)  
-**File:** `frontend/src/pages/StudentApp.tsx` → `StudentDashboard`
+**File:** `frontend/src/pages/StudentApp.tsx`
 
-### Purpose
-Student hub inspired by **DigiCampus**: batches, feed, AI, Jarvis.
+### Header
+- Sticky white bar.
+- Left: "AcadMind · Student" (sky-600) + "Scholar Portal" title.
+- Right: Health badge + User Menu (name, role badge, student ID, and Sign Out).
 
-### Header (sticky)
-| Left | Right |
-|------|-------|
-| “AcadMind · Student” (sky) | System status badge |
-| “DigiCampus” (h1) | User menu (+ Student ID if set) |
-
-### Tab navigation
-| Tab ID | Label | View |
-|--------|-------|------|
-| campus | Campus | Default |
-| ai | Ask AI | Query assistant |
-| jarvis | Jarvis | Screenshot upload |
-
-Active tab: indigo background. Inactive: zinc text, hover bg.
+### Navigation
+Two main tab buttons:
+- **Campus** (Default)
+- **ASK Jarvis** (RAG assistant)
 
 ---
 
-## Screen 5a — Student tab: Campus
+## Screen 5a — Student Tab: Campus
 
-### Section 1 — My batches
-**Component:** inline `MyBatches` in `StudentApp.tsx`
-
-- Grid of enrolled batch cards (code, name, subject count, semester)
-- **Empty state:** “Not enrolled in any batch yet. Ask faculty to add your Student ID.”
-
-### Section 2 — Announcements & deadlines
-**Component:** `CampusFeed.tsx` (student API)
-
-- Same card layout as faculty feed
-- Items from batches the student is enrolled in
-- Badges by type, batch code, subject code, due date, file attachment
-
----
-
-## Screen 5b — Student tab: Ask AI
-
-**Component:** `QueryAssistantPanel.tsx`
-
-### Purpose
-Natural-language Q&A over enrolled batch data (Neo4j + Gemini).
+**File:** `frontend/src/components/StudentCampusPanel.tsx`
 
 ### Layout
-- Title: “Ask AcadMind AI”
-- Subtitle: Query deadlines, exams & assignments from campus graph
-- Textarea + “Ask” button
-- Answer area (pre-wrap text, dark panel)
-- Source citations list (title, subject, due date)
-
-### Example prompts (placeholder)
-- “When is the CN exam?”
-- “What's due this week?”
-
-### States
-- Loading: “Searching…”
-- Error message
-- Empty until first query
+- Top navigation bar containing filtering category tabs: **Academic**, **Cultural Events**, **Technical Events**, **Global Updates**.
+- Sub-filters:
+  - Except under "Global Updates", a two-column sidebar layout is used:
+    - **Sidebar (Filters):** Labeled "My Subjects", "Clubs", or "Domains" containing selection filters.
+    - **Main Content:** A feed of notices filtered by the selected category and sidebar filter.
+- Notices are rendered as card items (`CampusFeed.tsx`) showing type badges (exam, notice, assignment), categories, batch codes, dates, titles, and body texts.
 
 ---
 
-## Screen 5c — Student tab: Jarvis
+## Screen 5b — Student Tab: ASK Jarvis
 
-**Component:** `JarvisPanel.tsx`
+**File:** `frontend/src/components/QueryAssistantPanel.tsx`
 
 ### Purpose
-Upload screenshots for OCR / event extraction (Phase 3 — **currently stub**).
+Conversational Q&A (RAG) assistant grounded in Neo4j knowledge graph notices.
 
 ### Layout
-- Title: “Jarvis Memory”
-- Subtitle: Upload screenshots from WhatsApp, email, or notice boards
-- Large dashed upload zone (full width)
-- Shows filename after selection
-- Result message panel after upload
-
-### States
-- Loading: “Uploading…”
-- Error / success message
+- Labeled "ASK Jarvis".
+- Description: "RAG-powered answers from the campus knowledge graph — academic, cultural & technical notices seeded by faculty".
+- Textarea to ask questions (e.g. "When is the CN exam? Any hackathons this month?").
+- Search button: "ASK Jarvis" (changes to "Searching graph..." when active).
+- Answer panel: Clean light card display showing formatted answers.
+- Source Citations: Bulleted list showing titles, categories, subjects, and due dates of the notices that served as sources.
 
 ---
 
-## Shared components
-
-### UserMenu (`UserMenu.tsx`)
-Shown in faculty & student headers when profile loaded.
-
-| Element | Description |
-|---------|-------------|
-| Name | Full name or email |
-| Role badge | student (sky) / faculty (violet) / admin (amber) |
-| Student ID | Mono text, student only |
-| Sign out | Border button |
-
-### StatusBadge (`StatusBadge.tsx`)
-Backend health indicator in header.
-
-| Status | Color |
-|--------|-------|
-| ok | Emerald |
-| degraded | Amber |
-| error / offline | Red |
-| loading | Gray “…” |
-
-### Card (`ui/Card.tsx`)
-Base container for feeds, forms, batch tiles.
-
-### CampusFeed (`CampusFeed.tsx`)
-Reusable feed list; `api` prop: `"faculty"` | `"student"`.
-
-Each item:
-- Type badge
-- Batch code, subject code
-- Due date (amber, right-aligned)
-- Title, content, file name
-
----
-
-## User flows (for Stitch journey maps)
-
-### Flow A — Faculty setup
-```
-Landing → Faculty → Sign up → Dashboard
-→ Create batch (modal) → Open batch → Add subjects
-→ Add students (12-digit IDs) → Post announcement (batch + subject + optional file)
-```
-
-### Flow B — Student onboarding
-```
-Landing → Student → Sign up (with 12-digit ID)
-→ Faculty adds same ID to batch
-→ Student sees batch + feed on Campus tab → Ask AI about notices
-```
-
-### Flow C — Parallel testing
-```
-Tab 1: /faculty (faculty session)
-Tab 2: /student (student session)
-Separate Supabase storage keys — sessions don't conflict
-```
-
----
-
-## API surface (per screen)
-
-| Screen | Key endpoints |
-|--------|---------------|
-| Auth signup | `POST /api/v1/auth/signup` |
-| Auth profile | `GET /api/v1/{faculty\|student}/me` |
-| Faculty batches | `GET/POST /api/v1/faculty/batches` |
-| Batch detail | `GET /api/v1/faculty/batches/{id}` |
-| Add subject | `POST .../batches/{id}/subjects` |
-| Add/remove student | `POST/DELETE .../batches/{id}/students[/{enrollment_id}]` |
-| Create post | `POST /api/v1/faculty/posts` (multipart) |
-| Faculty feed | `GET /api/v1/faculty/feed` |
-| Student batches | `GET /api/v1/student/batches` |
-| Student feed | `GET /api/v1/student/feed` |
-| Ask AI | `POST /api/v1/student/query/chat` |
-| Jarvis | `POST /api/v1/student/jarvis/upload` |
-| Health | `GET /api/v1/health` |
-
----
-
-## Redesign guidance for Stitch
+## Redesign Guidance for Stitch
 
 ### Keep
-- Two-portal model (Faculty / Student) with distinct accent colors
-- Dark modern aesthetic (DigiCampus / campus app feel)
-- Post composer with **always-visible upload** (Facebook-style)
-- 12-digit Student ID as first-class UI element
-- Tab structure on student side (Campus / Ask AI / Jarvis)
-- Batch detail tabs (Notices / Subjects / Students)
-- Type-colored badges on feed items
+- Role-based accent theme (Violet for Faculty, Sky/Teal for Student, Indigo for core system controls).
+- Clean layouts, dynamic 12-digit student ID structures, and sidebar filter elements.
+- The dynamic loading of the Scholar Portal title.
+- Notice categories (Academic, Cultural, Technical, Global) and their distinct badge styling.
 
-### Improve (open to Stitch)
-- Navigation hierarchy and breadcrumbs
-- Mobile bottom nav for student tabs
-- Richer empty states and onboarding illustrations
-- Batch card visual hierarchy
-- Post composer layout (inline vs modal on mobile)
-- Loading skeletons instead of plain text
-- Toast notifications for actions (add student, post, remove)
-- Accessibility: focus states, contrast, form labels
+### Improve
+- Transition the entire layout to a premium **Light Mode** design system.
+- Use a cohesive typography layout (Outfit/Inter) with refined letter-spacing.
+- Add soft margins, light borders (`slate-200`), and clean micro-shadows (`shadow-sm`) instead of high-glow borders.
+- Provide neat loading skeletons for notice feeds and AI search responses.
 
-### Do not add
-- “Switch portal” link in authenticated headers (removed by design)
-- Light theme requirement (dark is intentional unless product decides otherwise)
-- Email confirmation step in signup flow
-
-### Reference products
-- **DigiCampus** — student feed, batches, announcements
-- **Facebook** — post composer with persistent upload affordance
-- **Modern SaaS dashboards** — sticky header, card grids, status indicators
-
----
-
-## File → screen mapping
-
-| File | Screen / section |
-|------|------------------|
-| `pages/LandingPage.tsx` | Landing |
-| `components/AuthPage.tsx` | Faculty & student auth |
-| `pages/FacultyApp.tsx` | Faculty shell + dashboard gate |
-| `components/PostComposer.tsx` | Faculty announcement composer |
-| `components/BatchGrid.tsx` | Faculty batch list |
-| `components/CreateBatchModal.tsx` | Create batch modal |
-| `components/BatchDetail.tsx` | Faculty batch detail |
-| `components/CampusFeed.tsx` | Faculty & student feeds |
-| `pages/StudentApp.tsx` | Student shell + dashboard + My Batches |
-| `components/QueryAssistantPanel.tsx` | Ask AI tab |
-| `components/JarvisPanel.tsx` | Jarvis tab |
-| `components/UserMenu.tsx` | Header user menu |
-| `components/StatusBadge.tsx` | Header health badge |
-| `components/ui/Card.tsx` | Base card + badge variants |
-
----
-
-## Glossary
-
-| Term | Meaning |
-|------|---------|
-| Batch | A class group (e.g. CSE 6A, Sem VI) |
-| Subject | Course within a batch (e.g. CN, SE) |
-| Student ID | 12-digit institutional enrollment ID |
-| Post / Notice | Faculty announcement (exam, assignment, notice, resource) |
-| Campus feed | Chronological list of posts/events for user’s batches |
-| DigiCampus | Student-facing brand name for the portal |
-
----
-
-*Last updated: June 2026 — AcadMind Phase 2 frontend*
+### Do Not Add
+- Floating glassmorphic blur overlays that obstruct content.
+- Saturated neon backgrounds or dark backgrounds.
+- Unnecessary file upload elements (since files have been removed from the backend database schema).

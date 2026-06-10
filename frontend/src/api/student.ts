@@ -40,11 +40,25 @@ export type FeedItem = {
   title: string;
   content: string;
   item_type: string;
+  event_category: string;
+  global_scope: string | null;
+  group_name: string | null;
   subject_code: string | null;
   batch_code: string | null;
   due_date: string | null;
-  file_name: string | null;
   created_at: string | null;
+};
+
+export type StudentSubject = {
+  id: string;
+  name: string;
+  code: string;
+  batch_id: string;
+  batch_code: string | null;
+};
+
+export type CampusGroup = {
+  name: string;
 };
 
 export async function fetchProfile(token: string): Promise<UserProfile> {
@@ -67,6 +81,24 @@ export async function fetchBatches(): Promise<BatchResponse[]> {
   return response.json();
 }
 
+export async function fetchSubjects(): Promise<StudentSubject[]> {
+  const token = await getAccessToken();
+  const response = await fetch(`${API_BASE}${PREFIX}/subjects`, { headers: authHeaders(token) });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function fetchCampusGroups(
+  category: "cultural" | "technical",
+): Promise<CampusGroup[]> {
+  const token = await getAccessToken();
+  const response = await fetch(`${API_BASE}${PREFIX}/groups/${category}`, {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
 export async function sendQuery(message: string, sessionId?: string) {
   const token = await getAccessToken();
   const response = await fetch(`${API_BASE}${PREFIX}/query/chat`, {
@@ -78,15 +110,3 @@ export async function sendQuery(message: string, sessionId?: string) {
   return response.json();
 }
 
-export async function uploadScreenshot(file: File) {
-  const token = await getAccessToken();
-  const formData = new FormData();
-  formData.append("file", file);
-  const response = await fetch(`${API_BASE}${PREFIX}/jarvis/upload`, {
-    method: "POST",
-    headers: authHeaders(token),
-    body: formData,
-  });
-  if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
-  return response.json();
-}

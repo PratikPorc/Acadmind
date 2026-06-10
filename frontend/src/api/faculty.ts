@@ -61,12 +61,14 @@ export type PostSummary = {
   id: string;
   content: string;
   post_type: string;
+  event_category: string;
+  global_scope: string | null;
+  group_name: string | null;
   subject_name: string | null;
   subject_code: string | null;
   batch_code: string | null;
   batch_name: string | null;
   due_date: string | null;
-  file_name: string | null;
   created_at: string | null;
 };
 
@@ -75,10 +77,12 @@ export type FeedItem = {
   title: string;
   content: string;
   item_type: string;
+  event_category: string;
+  global_scope: string | null;
+  group_name: string | null;
   subject_code: string | null;
   batch_code: string | null;
   due_date: string | null;
-  file_name: string | null;
   created_at: string | null;
 };
 
@@ -147,18 +151,40 @@ export async function fetchBatchPosts(batchId: string): Promise<PostSummary[]> {
   return response.json();
 }
 
-export async function createPost(
-  batchId: string,
-  subjectId: string,
-  content: string,
-  file: File | null,
-) {
+export type CampusOptions = {
+  clubs: string[];
+  domains: string[];
+  global_scopes: string[];
+};
+
+export async function fetchCampusOptions(): Promise<CampusOptions> {
+  const response = await authFetch(`${PREFIX}/campus-options`);
+  return response.json();
+}
+
+export async function createPost({
+  batchId,
+  subjectId,
+  content,
+  eventCategory,
+  groupName = null,
+  globalScope = null,
+}: {
+  batchId: string;
+  subjectId: string | null;
+  content: string;
+  eventCategory: "academic" | "cultural" | "technical" | "global";
+  groupName?: string | null;
+  globalScope?: string | null;
+}) {
   const token = await getAccessToken();
   const formData = new FormData();
   formData.append("batch_id", batchId);
-  formData.append("subject_id", subjectId);
   formData.append("content", content);
-  if (file) formData.append("file", file);
+  formData.append("event_category", eventCategory);
+  if (subjectId) formData.append("subject_id", subjectId);
+  if (groupName) formData.append("group_name", groupName);
+  if (globalScope) formData.append("global_scope", globalScope);
 
   const response = await fetch(`${API_BASE}${PREFIX}/posts`, {
     method: "POST",

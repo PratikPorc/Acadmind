@@ -73,7 +73,7 @@ function FacultyDashboard() {
           </div>
           <div className="lg:col-span-2">
             <h2 className="mb-4 text-lg font-semibold text-zinc-100">Campus feed</h2>
-            <CampusFeed api="faculty" refreshKey={feedKey} />
+            <CampusFeed api="faculty" refreshKey={feedKey} sectioned />
           </div>
         </div>
       </div>

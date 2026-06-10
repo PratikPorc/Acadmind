@@ -1,1 +1,1 @@
-"""Jarvis Memory Assistant agents — implemented in Phase 3."""
+"""Jarvis query assistant — RAG over Neo4j knowledge graph (OCR/vision deferred)."""

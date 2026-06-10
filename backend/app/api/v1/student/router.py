@@ -1,18 +1,19 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends
 
 from app.api.deps import require_student
 from app.core.security import AuthUser
 from app.models.schemas import (
     BatchDetail,
     BatchResponse,
+    CampusGroupResponse,
     FeedItem,
-    JarvisUploadResponse,
     PostSummary,
     QueryChatRequest,
     QueryChatResponse,
+    StudentSubjectResponse,
     UserProfile,
 )
 from app.services import batch_service, feed_service, post_service
@@ -33,6 +34,21 @@ async def student_feed(
     student: Annotated[AuthUser, Depends(require_student)],
 ) -> list[FeedItem]:
     return await feed_service.get_student_feed(student)
+
+
+@router.get("/subjects", response_model=list[StudentSubjectResponse])
+async def student_subjects(
+    student: Annotated[AuthUser, Depends(require_student)],
+) -> list[StudentSubjectResponse]:
+    return await batch_service.list_student_subjects(student)
+
+
+@router.get("/groups/{category}", response_model=list[CampusGroupResponse])
+async def student_groups(
+    category: str,
+    student: Annotated[AuthUser, Depends(require_student)],
+) -> list[CampusGroupResponse]:
+    return await batch_service.list_campus_groups(student, category)
 
 
 @router.get("/batches", response_model=list[BatchResponse])
@@ -70,19 +86,4 @@ async def query_chat(
         answer=answer,
         session_id=session_id,
         sources=sources,
-    )
-
-
-@router.post("/jarvis/upload", response_model=JarvisUploadResponse)
-async def upload_screenshot(
-    student: Annotated[AuthUser, Depends(require_student)],
-    file: UploadFile = File(...),
-) -> JarvisUploadResponse:
-    return JarvisUploadResponse(
-        message=(
-            f"Jarvis upload ready for {student.full_name or student.email}. "
-            f"Received '{file.filename}'. Phase 3 will run OCR and event extraction."
-        ),
-        extracted_text=None,
-        event_id=None,
     )

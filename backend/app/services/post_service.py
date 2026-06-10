@@ -1,12 +1,10 @@
 import logging
-import re
 import uuid
 from difflib import get_close_matches
-from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from app.config import get_settings
+from app.constants.campus import CAMPUS_CLUBS, CAMPUS_DOMAINS, GLOBAL_SCOPES
 from app.core.llm import get_chat_model
 from app.core.security import AuthUser
 from app.db.neo4j import get_neo4j_driver
@@ -14,6 +12,8 @@ from app.models.schemas import PostCreateResponse, PostSummary, SubjectResponse
 from app.services.batch_service import get_batch_subjects, _assert_faculty_owns_batch
 
 logger = logging.getLogger(__name__)
+
+VALID_EVENT_CATEGORIES = frozenset({"academic", "cultural", "technical", "global"})
 
 
 class ParsedNotice(BaseModel):
@@ -25,12 +25,24 @@ class ParsedNotice(BaseModel):
     post_type: str = Field(
         description="One of: exam, assignment, notice, resource",
     )
+    event_category: str = Field(
+        description="One of: academic, cultural, technical, global",
+    )
+    group_name: str | None = Field(
+        default=None,
+        description="Club name for cultural or domain name for technical notices",
+    )
     title: str = Field(description="Short title for the notice or event")
     due_date: str | None = Field(
         default=None,
         description="ISO date YYYY-MM-DD if a deadline or exam date is mentioned",
     )
     summary: str = Field(description="One sentence summary of the notice")
+
+
+def _normalize_event_category(value: str) -> str:
+    normalized = value.lower().strip()
+    return normalized if normalized in VALID_EVENT_CATEGORIES else "academic"
 
 
 def _match_subject(
@@ -71,7 +83,6 @@ def _match_subject(
         if close:
             return name_map[close[0]]
 
-    # Try matching from title/summary text
     haystack = f"{parsed.title} {parsed.summary}".lower()
     for sub in subjects:
         if sub.code.lower() in haystack or sub.name.lower() in haystack:
@@ -85,12 +96,17 @@ async def parse_notice(
     batch_name: str,
     batch_code: str,
     subjects: list[SubjectResponse],
+    event_category: str = "academic",
+    group_name: str | None = None,
 ) -> ParsedNotice:
     subject_list = ", ".join(f"{s.code} ({s.name})" for s in subjects) or "none yet"
+    category = _normalize_event_category(event_category)
 
-    prompt = f"""Parse this academic notice for batch "{batch_name}" ({batch_code}).
+    prompt = f"""Parse this campus notice for batch "{batch_name}" ({batch_code}).
 
 Available subjects in this batch: {subject_list}
+Faculty-selected category: {category}
+Faculty-selected group (club/domain): {group_name or "infer from notice"}
 
 Notice text:
 \"\"\"
@@ -98,40 +114,101 @@ Notice text:
 \"\"\"
 
 Rules:
-- Match subject by code or name (CN = Computer Networks, SE = Software Engineering, etc.)
+- event_category: academic | cultural | technical | global
+  - academic: exams, assignments, subject notices, syllabus, resources
+  - cultural: fests, cultural events, dance, music, celebrations, sports meets
+  - technical: hackathons, tech fests, workshops, seminars, coding competitions, tech talks
+  - global: campus-wide updates, holidays, admin notices, general announcements
+- group_name: club name (cultural) or domain name (technical), e.g. "Dance Club", "AI & ML"
+- Match subject by code or name when the notice is academic (CN = Computer Networks, etc.)
 - post_type: exam | assignment | notice | resource
 - Extract due_date as YYYY-MM-DD when a date is mentioned (e.g. 15th July 2026 → 2026-07-15)
-- If only a document/resource is mentioned with no deadline, use post_type=resource
 """
 
     llm = get_chat_model()
     structured = llm.with_structured_output(ParsedNotice)
     try:
-        return structured.invoke(prompt)
+        parsed = structured.invoke(prompt)
+        parsed.event_category = _normalize_event_category(parsed.event_category or category)
+        if group_name and not parsed.group_name:
+            parsed.group_name = group_name.strip()
+        return parsed
     except Exception as exc:  # noqa: BLE001
         logger.warning("Structured parse failed, using fallback: %s", exc)
         return ParsedNotice(
             post_type="notice",
+            event_category=category,
             title=content[:80],
             summary=content,
         )
 
 
+def _validate_post_fields(
+    category: str,
+    group_name: str | None,
+    global_scope: str | None,
+) -> tuple[str | None, str | None]:
+    from fastapi import HTTPException, status
+
+    scope: str | None = None
+    group: str | None = None
+
+    if category == "academic":
+        return None, None
+    if category == "cultural":
+        if not group_name or group_name not in CAMPUS_CLUBS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Select a valid club from the list",
+            )
+        return None, group_name
+    if category == "technical":
+        if not group_name or group_name not in CAMPUS_DOMAINS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Select a valid domain from the list",
+            )
+        return None, group_name
+    if category == "global":
+        if not global_scope or global_scope not in GLOBAL_SCOPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Select global scope: academic, cultural, or technical",
+            )
+        return global_scope, None
+    return scope, group
+
+
 async def create_post(
     batch_id: str,
-    subject_id: str,
+    subject_id: str | None,
     faculty: AuthUser,
     content: str,
-    file_name: str | None = None,
-    file_path: str | None = None,
+    event_category: str = "academic",
+    group_name: str | None = None,
+    global_scope: str | None = None,
 ) -> PostCreateResponse:
     await _assert_faculty_owns_batch(batch_id, faculty.id)
+    category = _normalize_event_category(event_category)
+    validated_scope, validated_group = _validate_post_fields(category, group_name, global_scope)
+    group_name = validated_group
+    global_scope = validated_scope
     subjects = await get_batch_subjects(batch_id)
-    subject = next((s for s in subjects if s.id == subject_id), None)
-    if not subject:
+
+    subject: SubjectResponse | None = None
+    if subject_id:
+        subject = next((s for s in subjects if s.id == subject_id), None)
+        if not subject:
+            from fastapi import HTTPException, status
+
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject for batch")
+    elif category == "academic":
         from fastapi import HTTPException, status
 
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject for batch")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Subject is required for academic notices",
+        )
 
     driver = get_neo4j_driver()
     async with driver.session() as session:
@@ -144,18 +221,25 @@ async def create_post(
             raise ValueError("Batch not found")
 
     parsed = await parse_notice(
-        content=content or (file_name or "Uploaded resource"),
+        content=content,
         batch_name=batch_record["name"],
         batch_code=batch_record["code"],
-        subjects=[subject],
+        subjects=subjects if subjects else ([subject] if subject else []),
+        event_category=category,
+        group_name=group_name,
     )
+    parsed.event_category = category
+    if group_name:
+        parsed.group_name = group_name.strip()
+
+    if category == "academic" and not subject:
+        subject = _match_subject(parsed, subjects)
 
     post_id = str(uuid.uuid4())
     event_id: str | None = None
-    resource_id: str | None = None
     post_type = parsed.post_type.lower()
-    if file_path and post_type not in ("exam", "assignment"):
-        post_type = "resource"
+    if category != "academic" and post_type == "resource":
+        post_type = "notice"
 
     async with driver.session() as session:
         await session.run(
@@ -166,8 +250,9 @@ async def create_post(
                 id: $post_id,
                 content: $content,
                 post_type: $post_type,
-                file_name: $file_name,
-                file_path: $file_path,
+                event_category: $event_category,
+                global_scope: $global_scope,
+                group_name: $group_name,
                 title: $title,
                 due_date: $due_date,
                 created_at: datetime()
@@ -180,8 +265,9 @@ async def create_post(
             post_id=post_id,
             content=content,
             post_type=post_type,
-            file_name=file_name or "",
-            file_path=file_path or "",
+            event_category=parsed.event_category,
+            global_scope=global_scope or "",
+            group_name=parsed.group_name or "",
             title=parsed.title,
             due_date=parsed.due_date or "",
         )
@@ -196,8 +282,13 @@ async def create_post(
                 subject_id=subject.id,
             )
 
-        if post_type in ("exam", "assignment") or parsed.due_date:
+        if post_type in ("exam", "assignment") or parsed.due_date or category in (
+            "cultural",
+            "technical",
+            "global",
+        ):
             event_id = str(uuid.uuid4())
+            event_type = post_type if post_type in ("exam", "assignment") else category
             await session.run(
                 """
                 MATCH (p:Post {id: $post_id}), (b:Batch {id: $batch_id})
@@ -205,6 +296,7 @@ async def create_post(
                     id: $event_id,
                     title: $title,
                     event_type: $event_type,
+                    event_category: $event_category,
                     due_date: $due_date,
                     summary: $summary,
                     created_at: datetime()
@@ -221,50 +313,23 @@ async def create_post(
                 batch_id=batch_id,
                 event_id=event_id,
                 title=parsed.title,
-                event_type=post_type if post_type in ("exam", "assignment") else "deadline",
+                event_type=event_type,
+                event_category=parsed.event_category,
                 due_date=parsed.due_date or "",
                 summary=parsed.summary,
                 subject_id=subject.id if subject else "",
             )
 
-        if file_path or post_type == "resource":
-            resource_id = str(uuid.uuid4())
-            await session.run(
-                """
-                MATCH (p:Post {id: $post_id}), (b:Batch {id: $batch_id})
-                CREATE (r:Resource {
-                    id: $resource_id,
-                    title: $title,
-                    file_name: $file_name,
-                    file_path: $file_path,
-                    created_at: datetime()
-                })
-                MERGE (r)-[:FROM_POST]->(p)
-                MERGE (r)-[:FOR_BATCH]->(b)
-                WITH r
-                OPTIONAL MATCH (sub:Subject {id: $subject_id})
-                FOREACH (_ IN CASE WHEN sub IS NOT NULL THEN [1] ELSE [] END |
-                    MERGE (r)-[:FOR_SUBJECT]->(sub)
-                )
-                """,
-                post_id=post_id,
-                batch_id=batch_id,
-                resource_id=resource_id,
-                title=parsed.title or file_name or "Resource",
-                file_name=file_name or "",
-                file_path=file_path or "",
-                subject_id=subject.id if subject else "",
-            )
-
     parsed_dict = parsed.model_dump()
-    parsed_dict["matched_subject"] = {"code": subject.code, "name": subject.name}
+    if subject:
+        parsed_dict["matched_subject"] = {"code": subject.code, "name": subject.name}
 
     return PostCreateResponse(
         post_id=post_id,
-        message=f"Post created and graph seeded ({post_type})",
+        message=f"Notice seeded to knowledge graph ({parsed.event_category} · {post_type})",
         parsed=parsed_dict,
         event_id=event_id,
-        resource_id=resource_id,
+        resource_id=None,
     )
 
 
@@ -293,23 +358,15 @@ async def list_posts(batch_id: str) -> list[PostSummary]:
                 id=p["id"],
                 content=p.get("content", ""),
                 post_type=p.get("post_type", "notice"),
+                event_category=p.get("event_category") or "academic",
+                global_scope=p.get("global_scope") or None,
+                group_name=p.get("group_name") or None,
                 subject_name=r.get("subject_name"),
                 subject_code=r.get("subject_code"),
                 batch_code=r.get("batch_code"),
                 batch_name=r.get("batch_name"),
                 due_date=p.get("due_date") or None,
-                file_name=p.get("file_name") or None,
                 created_at=created_str,
             )
         )
     return posts
-
-
-def save_upload(batch_id: str, filename: str, data: bytes) -> str:
-    settings = get_settings()
-    safe_name = re.sub(r"[^\w.\-]", "_", filename)
-    dest_dir = Path(settings.upload_dir) / "posts" / batch_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{uuid.uuid4().hex}_{safe_name}"
-    dest.write_bytes(data)
-    return str(dest)

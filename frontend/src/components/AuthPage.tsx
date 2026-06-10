@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { STUDENT_PORTAL_NAME } from "../lib/branding";
 
 type Mode = "signin" | "signup";
 
@@ -65,7 +66,7 @@ export function AuthPage() {
         <p className="mt-1 text-sm text-zinc-500">
           {portal === "faculty"
             ? "Manage batches & campus announcements"
-            : "Access notices, deadlines & AI assistant"}
+            : `${STUDENT_PORTAL_NAME} — campus notices & ASK Jarvis`}
         </p>
 
         <div className="mt-6 flex gap-2 rounded-xl bg-zinc-800/80 p-1">

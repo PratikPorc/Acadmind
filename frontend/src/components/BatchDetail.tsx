@@ -155,6 +155,9 @@ export function BatchDetail({ batchId, onBack }: Props) {
                   <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-xs text-indigo-300">
                     {p.post_type}
                   </span>
+                  <span className="rounded-full bg-zinc-700/80 px-2 py-0.5 text-xs text-zinc-400">
+                    {p.event_category || "academic"}
+                  </span>
                   {p.subject_code && (
                     <span className="text-xs text-zinc-500">{p.subject_code}</span>
                   )}
@@ -162,7 +165,7 @@ export function BatchDetail({ batchId, onBack }: Props) {
                     <span className="ml-auto text-xs text-amber-400">Due {p.due_date}</span>
                   )}
                 </div>
-                <p className="mt-2 text-sm text-zinc-300">{p.content || p.file_name}</p>
+                <p className="mt-2 text-sm text-zinc-300">{p.content}</p>
               </Card>
             ))
           )}
@@ -233,7 +236,7 @@ export function BatchDetail({ batchId, onBack }: Props) {
             <h4 className="font-medium text-zinc-100">Add student by ID</h4>
             <p className="mt-1 text-xs text-zinc-500">
               Enter the full 12-digit Student ID from signup (e.g. 231003003137). This links the
-              student to the batch so they can see notices and ask AI about batch content.
+              student to the batch so they can see notices and ASK Jarvis about batch content.
             </p>
             <form onSubmit={handleAddStudent} className="mt-3 space-y-2">
               <input

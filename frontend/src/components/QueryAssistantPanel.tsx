@@ -4,6 +4,7 @@ import { Card } from "./ui/Card";
 
 type Source = {
   type: string;
+  category?: string;
   title: string;
   subject?: string;
   batch?: string;
@@ -36,9 +37,10 @@ export function QueryAssistantPanel() {
   return (
     <Card className="p-6">
       <header className="mb-4">
-        <h2 className="text-lg font-semibold text-zinc-100">Ask AcadMind AI</h2>
+        <h2 className="text-lg font-semibold text-zinc-100">ASK Jarvis</h2>
         <p className="text-sm text-zinc-500">
-          Query deadlines, exams & assignments from your campus graph
+          RAG-powered answers from the campus knowledge graph — academic, cultural & technical
+          notices seeded by faculty
         </p>
       </header>
 
@@ -46,7 +48,7 @@ export function QueryAssistantPanel() {
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder="When is the CN exam? What's due this week?"
+          placeholder="When is the CN exam? Any hackathons this month? When is the cultural fest?"
           rows={3}
           className="input-dark w-full resize-none"
         />
@@ -55,7 +57,7 @@ export function QueryAssistantPanel() {
           disabled={loading}
           className="self-start rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
         >
-          {loading ? "Searching…" : "Ask"}
+          {loading ? "Searching graph…" : "ASK Jarvis"}
         </button>
       </form>
 
@@ -70,6 +72,7 @@ export function QueryAssistantPanel() {
           {sources.map((s, i) => (
             <li key={i} className="rounded-lg bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
               {s.title}
+              {s.category && ` · ${s.category}`}
               {s.subject && ` · ${s.subject}`}
               {s.due_date && ` · due ${s.due_date}`}
             </li>

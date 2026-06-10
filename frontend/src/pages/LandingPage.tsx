@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { STUDENT_PORTAL_NAME } from "../lib/branding";
 
 export function LandingPage() {
   return (
@@ -11,7 +12,8 @@ export function LandingPage() {
           AcadMind
         </h1>
         <p className="mt-4 text-zinc-400">
-          AI-powered campus platform — notices, deadlines, resources & intelligent Q&A
+          Knowledge graph campus platform — academic, cultural & technical notices with RAG-powered
+          ASK Jarvis
         </p>
 
         <div className="mt-12 grid gap-4 sm:grid-cols-2">
@@ -22,7 +24,7 @@ export function LandingPage() {
             <p className="text-sm font-semibold uppercase text-violet-400">Faculty</p>
             <p className="mt-2 text-xl font-bold text-zinc-100">Campus Manager</p>
             <p className="mt-2 text-sm text-zinc-500">
-              Batches · subjects · announcements · resources
+              Batches · subjects · academic, cultural & technical notices
             </p>
           </Link>
 
@@ -31,9 +33,9 @@ export function LandingPage() {
             className="group rounded-2xl border border-zinc-800 bg-zinc-900/80 p-8 transition hover:border-sky-500/50 hover:shadow-lg hover:shadow-sky-950/30"
           >
             <p className="text-sm font-semibold uppercase text-sky-400">Student</p>
-            <p className="mt-2 text-xl font-bold text-zinc-100">DigiCampus</p>
+            <p className="mt-2 text-xl font-bold text-zinc-100">{STUDENT_PORTAL_NAME}</p>
             <p className="mt-2 text-sm text-zinc-500">
-              Feed · deadlines · AI assistant · Jarvis
+              Campus feed · subjects & events · ASK Jarvis RAG
             </p>
           </Link>
         </div>

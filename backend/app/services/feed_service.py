@@ -4,6 +4,24 @@ from app.models.schemas import FeedItem
 from app.utils.student_graph import STUDENT_MATCH, student_params
 
 
+def _feed_item_from_post(raw: dict) -> FeedItem | None:
+    if not raw or not raw.get("id"):
+        return None
+    return FeedItem(
+        id=raw["id"],
+        title=raw.get("title") or raw.get("content") or "",
+        content=raw.get("content") or "",
+        item_type=raw.get("item_type") or "notice",
+        event_category=raw.get("event_category") or "academic",
+        global_scope=raw.get("global_scope") or None,
+        group_name=raw.get("group_name") or None,
+        subject_code=raw.get("subject_code"),
+        batch_code=raw.get("batch_code"),
+        due_date=raw.get("due_date") or None,
+        created_at=raw.get("created_at"),
+    )
+
+
 async def get_student_feed(student: AuthUser) -> list[FeedItem]:
     driver = get_neo4j_driver()
     async with driver.session() as session:
@@ -15,40 +33,32 @@ async def get_student_feed(student: AuthUser) -> list[FeedItem]:
             OPTIONAL MATCH (p)-[:FOR_SUBJECT]->(sub:Subject)
             OPTIONAL MATCH (e:Event)-[:IN_BATCH]->(b)
             OPTIONAL MATCH (e)-[:BELONGS_TO]->(sub2:Subject)
-            OPTIONAL MATCH (r:Resource)-[:FOR_BATCH]->(b)
-            RETURN collect(DISTINCT {
+            RETURN collect(DISTINCT {{
                 id: p.id,
                 title: coalesce(p.title, p.content),
                 content: p.content,
                 item_type: p.post_type,
+                event_category: coalesce(p.event_category, 'academic'),
+                global_scope: p.global_scope,
+                group_name: p.group_name,
                 subject_code: sub.code,
                 batch_code: b.code,
                 due_date: p.due_date,
-                file_name: p.file_name,
                 created_at: toString(p.created_at)
-            }) AS posts,
-            collect(DISTINCT {
+            }}) AS posts,
+            collect(DISTINCT {{
                 id: e.id,
                 title: e.title,
                 content: e.summary,
                 item_type: e.event_type,
+                event_category: coalesce(e.event_category, 'academic'),
+                global_scope: null,
+                group_name: null,
                 subject_code: sub2.code,
                 batch_code: b.code,
                 due_date: e.due_date,
-                file_name: null,
                 created_at: toString(e.created_at)
-            }) AS events,
-            collect(DISTINCT {
-                id: r.id,
-                title: r.title,
-                content: r.file_name,
-                item_type: 'resource',
-                subject_code: null,
-                batch_code: b.code,
-                due_date: null,
-                file_name: r.file_name,
-                created_at: toString(r.created_at)
-            }) AS resources
+            }}) AS events
             """,
             **student_params(student),
         )
@@ -58,11 +68,14 @@ async def get_student_feed(student: AuthUser) -> list[FeedItem]:
     if not record:
         return items
 
-    for group in ("posts", "events", "resources"):
+    seen: set[str] = set()
+    for group in ("posts", "events"):
         for raw in record[group] or []:
-            if not raw or not raw.get("id"):
+            item = _feed_item_from_post(raw)
+            if not item or item.id in seen:
                 continue
-            items.append(FeedItem(**raw))
+            seen.add(item.id)
+            items.append(item)
 
     items.sort(key=lambda x: x.created_at or "", reverse=True)
     return items
@@ -80,10 +93,12 @@ async def get_faculty_feed(faculty: AuthUser) -> list[FeedItem]:
                    coalesce(p.title, p.content) AS title,
                    p.content AS content,
                    p.post_type AS item_type,
+                   coalesce(p.event_category, 'academic') AS event_category,
+                   p.global_scope AS global_scope,
+                   p.group_name AS group_name,
                    sub.code AS subject_code,
                    b.code AS batch_code,
                    p.due_date AS due_date,
-                   p.file_name AS file_name,
                    toString(p.created_at) AS created_at
             ORDER BY p.created_at DESC
             LIMIT 50
@@ -92,4 +107,4 @@ async def get_faculty_feed(faculty: AuthUser) -> list[FeedItem]:
         )
         records = await result.data()
 
-    return [FeedItem(**r) for r in records if r.get("id")]
+    return [_feed_item_from_post(r) for r in records if _feed_item_from_post(r)]

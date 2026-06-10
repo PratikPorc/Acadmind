@@ -1,1 +1,1 @@
-"""Query Assistant agents — implemented in Phase 2."""
+"""ASK Jarvis — RAG query agents over Neo4j knowledge graph."""

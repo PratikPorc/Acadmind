@@ -4,9 +4,18 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from app.constants.campus import CAMPUS_CLUBS, CAMPUS_DOMAINS
 from app.core.security import AuthUser
 from app.db.neo4j import get_neo4j_driver
-from app.models.schemas import BatchCreate, BatchDetail, BatchResponse, SubjectCreate, SubjectResponse
+from app.models.schemas import (
+    BatchCreate,
+    BatchDetail,
+    BatchResponse,
+    CampusGroupResponse,
+    StudentSubjectResponse,
+    SubjectCreate,
+    SubjectResponse,
+)
 from app.utils.enrollment import normalize_enrollment_id
 from app.utils.student_graph import STUDENT_MATCH, student_params
 
@@ -139,6 +148,11 @@ async def add_subject(batch_id: str, faculty: AuthUser, payload: SubjectCreate) 
                 batch_id: $batch_id
             })
             MERGE (b)-[:HAS_SUBJECT]->(sub)
+            WITH b, sub
+            OPTIONAL MATCH (b)<-[:MEMBER_OF]-(s:Student)
+            FOREACH (_ IN CASE WHEN s IS NOT NULL THEN [1] ELSE [] END |
+                MERGE (s)-[:ENROLLED_IN]->(sub)
+            )
             """,
             batch_id=batch_id,
             id=subject_id,
@@ -169,6 +183,11 @@ async def add_student_to_batch(
             MATCH (b:Batch {id: $batch_id})
             MERGE (s:Student {enrollment_id: $enrollment_id})
             MERGE (s)-[:MEMBER_OF]->(b)
+            WITH s, b
+            OPTIONAL MATCH (b)-[:HAS_SUBJECT]->(sub:Subject)
+            FOREACH (_ IN CASE WHEN sub IS NOT NULL THEN [1] ELSE [] END |
+                MERGE (s)-[:ENROLLED_IN]->(sub)
+            )
             RETURN s.enrollment_id AS id
             """,
             batch_id=batch_id,
@@ -197,8 +216,10 @@ async def remove_student_from_batch(
     async with driver.session() as session:
         result = await session.run(
             """
-            MATCH (b:Batch {id: $batch_id})<-[r:MEMBER_OF]-(s:Student {enrollment_id: $enrollment_id})
-            DELETE r
+            MATCH (b:Batch {id: $batch_id})<-[m:MEMBER_OF]-(s:Student {enrollment_id: $enrollment_id})
+            OPTIONAL MATCH (b)-[:HAS_SUBJECT]->(sub:Subject)
+            OPTIONAL MATCH (s)-[e:ENROLLED_IN]->(sub)
+            DELETE e, m
             RETURN s.enrollment_id AS id
             """,
             batch_id=batch_id,
@@ -279,6 +300,61 @@ async def _assert_batch_access(batch_id: str, user: AuthUser) -> None:
             )
         if not await result.single():
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Batch access denied")
+
+
+async def list_student_subjects(student: AuthUser) -> list[StudentSubjectResponse]:
+    driver = get_neo4j_driver()
+    async with driver.session() as session:
+        await session.run(
+            f"""
+            {STUDENT_MATCH}
+            MATCH (s)-[:MEMBER_OF]->(b:Batch)
+            MATCH (b)-[:HAS_SUBJECT]->(sub:Subject)
+            MERGE (s)-[:ENROLLED_IN]->(sub)
+            """,
+            **student_params(student),
+        )
+        result = await session.run(
+            f"""
+            {STUDENT_MATCH}
+            MATCH (s)-[:ENROLLED_IN]->(sub:Subject)
+            OPTIONAL MATCH (b:Batch)-[:HAS_SUBJECT]->(sub)
+            RETURN DISTINCT sub.id AS id,
+                   sub.name AS name,
+                   sub.code AS code,
+                   sub.batch_id AS batch_id,
+                   b.code AS batch_code
+            ORDER BY sub.code
+            """,
+            **student_params(student),
+        )
+        records = await result.data()
+    return [StudentSubjectResponse(**r) for r in records if r.get("id")]
+
+
+async def list_campus_groups(student: AuthUser, category: str) -> list[CampusGroupResponse]:
+    if category not in ("cultural", "technical"):
+        return []
+    driver = get_neo4j_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            f"""
+            {STUDENT_MATCH}
+            MATCH (s)-[:MEMBER_OF]->(b:Batch)
+            MATCH (p:Post)-[:FOR_BATCH]->(b)
+            WHERE p.event_category = $category AND coalesce(p.group_name, '') <> ''
+            RETURN DISTINCT p.group_name AS name
+            ORDER BY name
+            """,
+            category=category,
+            **student_params(student),
+        )
+        records = await result.data()
+    from_posts = [CampusGroupResponse(name=r["name"]) for r in records if r.get("name")]
+    if from_posts:
+        return from_posts
+    defaults = CAMPUS_CLUBS if category == "cultural" else CAMPUS_DOMAINS
+    return [CampusGroupResponse(name=name) for name in defaults]
 
 
 def _batch_from_record(record: dict[str, Any]) -> BatchResponse:

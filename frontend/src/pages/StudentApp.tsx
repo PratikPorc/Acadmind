@@ -1,16 +1,14 @@
 import { useEffect, useState } from "react";
-import { fetchBatches, type BatchResponse } from "../api/student";
 import { AuthPage } from "../components/AuthPage";
-import { CampusFeed } from "../components/CampusFeed";
-import { JarvisPanel } from "../components/JarvisPanel";
 import { QueryAssistantPanel } from "../components/QueryAssistantPanel";
+import { StudentCampusPanel } from "../components/StudentCampusPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { UserMenu } from "../components/UserMenu";
-import { Card } from "../components/ui/Card";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
 import { fetchHealth, type HealthResponse } from "../api/client";
+import { STUDENT_PORTAL_NAME } from "../lib/branding";
 
-type Tab = "campus" | "ai" | "jarvis";
+type Tab = "campus" | "jarvis";
 
 function StudentShell({ children }: { children: React.ReactNode }) {
   const { profileError, refreshProfile } = useAuth();
@@ -28,7 +26,7 @@ function StudentShell({ children }: { children: React.ReactNode }) {
             <p className="text-xs font-semibold uppercase tracking-wider text-sky-400">
               AcadMind · Student
             </p>
-            <h1 className="text-xl font-bold text-zinc-100">DigiCampus</h1>
+            <h1 className="text-xl font-bold text-zinc-100">{STUDENT_PORTAL_NAME}</h1>
           </div>
           <div className="flex items-center gap-4">
             <StatusBadge health={health} error={null} />
@@ -53,42 +51,11 @@ function StudentShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function MyBatches() {
-  const [batches, setBatches] = useState<BatchResponse[]>([]);
-
-  useEffect(() => {
-    fetchBatches().then(setBatches).catch(() => setBatches([]));
-  }, []);
-
-  if (batches.length === 0) {
-    return (
-      <Card className="p-6 text-center text-sm text-zinc-500">
-        Not enrolled in any batch yet. Ask faculty to add your Student ID.
-      </Card>
-    );
-  }
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {batches.map((b) => (
-        <Card key={b.id} className="p-4">
-          <p className="text-xs font-semibold uppercase text-sky-400">{b.code}</p>
-          <p className="font-medium text-zinc-100">{b.name}</p>
-          <p className="mt-1 text-xs text-zinc-500">
-            {b.subject_count} subjects · Sem {b.semester}
-          </p>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
 function StudentDashboard() {
   const [tab, setTab] = useState<Tab>("campus");
   const tabs: { id: Tab; label: string }[] = [
     { id: "campus", label: "Campus" },
-    { id: "ai", label: "Ask AI" },
-    { id: "jarvis", label: "Jarvis" },
+    { id: "jarvis", label: "ASK Jarvis" },
   ];
 
   return (
@@ -111,19 +78,12 @@ function StudentDashboard() {
       </nav>
 
       {tab === "campus" && (
-        <div className="space-y-8">
-          <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-100">My batches</h2>
-            <MyBatches />
-          </section>
-          <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-100">Announcements & deadlines</h2>
-            <CampusFeed api="student" />
-          </section>
-        </div>
+        <section>
+          <h2 className="mb-4 text-lg font-semibold text-zinc-100">Campus notices</h2>
+          <StudentCampusPanel />
+        </section>
       )}
-      {tab === "ai" && <QueryAssistantPanel />}
-      {tab === "jarvis" && <JarvisPanel />}
+      {tab === "jarvis" && <QueryAssistantPanel />}
     </StudentShell>
   );
 }

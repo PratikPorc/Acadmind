@@ -1,0 +1,2197 @@
+﻿diff --git a/.gitignore b/.gitignore
+index f477c1a..e1a339b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,9 +1,10 @@
+-# Environment
++# Environment (per-app only ΓÇö no root .env)
+ .env
+ .env.local
+ .env.*.local
+ backend/.env
+ frontend/.env
++frontend/.env.local
+ 
+ # Python
+ __pycache__/
+diff --git a/README.md b/README.md
+index e67d976..bc7bfaf 100644
+--- a/README.md
++++ b/README.md
+@@ -4,8 +4,8 @@
+ 
+ AcadMind merges two complementary modules:
+ 
+-- **Query Assistant** ΓÇö RAG-powered institutional knowledge chat (Neo4j + LangChain/CrewAI)
+-- **Jarvis** ΓÇö Screenshot OCR, event extraction, reminders, NL-to-Cypher memory queries
++- **Campus Knowledge Graph** ΓÇö Faculty notices seed Neo4j (academic, cultural & technical events)
++- **ASK Jarvis** ΓÇö RAG-powered student queries over the knowledge graph (OCR/vision deferred)
+ 
+ ## Repository Structure
+ 
+@@ -133,8 +133,8 @@ App: http://localhost:5173
+ |-------|-------|--------|
+ | **0** | Monorepo scaffold, health checks, UI shell | Γ£à Current |
+ | **1** | Supabase auth, JWT middleware, profiles | Next |
+-| **2** | Query Assistant + Neo4j seed + RAG agents | Planned |
+-| **3** | Jarvis OCR + event extraction | Planned |
++| **2** | Knowledge graph seeding + ASK Jarvis RAG | Current |
++| **3** | OCR/vision upload (deferred) | Planned |
+ | **4** | Unified graph + NL-to-Cypher | Planned |
+ | **5** | Reminders + Celery + notifications | Planned |
+ | **6** | Docker deploy + viva demo | Planned |
+@@ -184,9 +184,7 @@ Free tier has rate limits ΓÇö fine for MVP demos and viva; monitor usage in AI S
+ | GET | `/api/v1/health` | Service health (Neo4j, Redis, Supabase, LLM) |
+ | GET | `/api/v1/llm/status` | LLM provider configuration status |
+ | GET | `/api/v1/auth/status` | Auth configuration status |
+-| POST | `/api/v1/query/chat` | Query Assistant (stub ΓåÆ Phase 2) |
+-| POST | `/api/v1/jarvis/upload` | Screenshot upload (stub ΓåÆ Phase 3) |
+-| GET | `/api/v1/jarvis/events` | User events (stub ΓåÆ Phase 3) |
++| POST | `/api/v1/student/query/chat` | ASK Jarvis ΓÇö RAG over knowledge graph |
+ 
+ ---
+ 
+diff --git a/backend/app/agents/jarvis/__init__.py b/backend/app/agents/jarvis/__init__.py
+index 14db7ac..c913fd3 100644
+--- a/backend/app/agents/jarvis/__init__.py
++++ b/backend/app/agents/jarvis/__init__.py
+@@ -1 +1 @@
+-"""Jarvis Memory Assistant agents ΓÇö implemented in Phase 3."""
++"""Jarvis query assistant ΓÇö RAG over Neo4j knowledge graph (OCR/vision deferred)."""
+diff --git a/backend/app/agents/query/__init__.py b/backend/app/agents/query/__init__.py
+index 2fa9d95..9325e62 100644
+--- a/backend/app/agents/query/__init__.py
++++ b/backend/app/agents/query/__init__.py
+@@ -1 +1 @@
+-"""Query Assistant agents ΓÇö implemented in Phase 2."""
++"""ASK Jarvis ΓÇö RAG query agents over Neo4j knowledge graph."""
+diff --git a/backend/app/api/v1/faculty/router.py b/backend/app/api/v1/faculty/router.py
+index 540ce82..9b317cd 100644
+--- a/backend/app/api/v1/faculty/router.py
++++ b/backend/app/api/v1/faculty/router.py
+@@ -1,6 +1,6 @@
+ from typing import Annotated
+ 
+-from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, status
++from fastapi import APIRouter, Depends, Form, HTTPException, status
+ 
+ from app.api.deps import require_faculty
+ from app.core.security import AuthUser
+@@ -10,12 +10,14 @@ from app.models.schemas import (
+     BatchDetail,
+     BatchResponse,
+     FeedItem,
++    CampusOptionsResponse,
+     PostCreateResponse,
+     PostSummary,
+     SubjectCreate,
+     SubjectResponse,
+     UserProfile,
+ )
++from app.constants.campus import CAMPUS_CLUBS, CAMPUS_DOMAINS, GLOBAL_SCOPES
+ from app.services import batch_service, feed_service, post_service
+ from app.services.user_service import sync_user_to_graph, to_profile
+ 
+@@ -35,34 +37,41 @@ async def faculty_feed(
+     return await feed_service.get_faculty_feed(faculty)
+ 
+ 
++@router.get("/campus-options", response_model=CampusOptionsResponse)
++async def campus_options(
++    faculty: Annotated[AuthUser, Depends(require_faculty)],
++) -> CampusOptionsResponse:
++    return CampusOptionsResponse(
++        clubs=list(CAMPUS_CLUBS),
++        domains=list(CAMPUS_DOMAINS),
++        global_scopes=list(GLOBAL_SCOPES),
++    )
++
++
+ @router.post("/posts", response_model=PostCreateResponse)
+ async def create_post_global(
+     faculty: Annotated[AuthUser, Depends(require_faculty)],
+     batch_id: str = Form(...),
+-    subject_id: str = Form(...),
+-    content: str = Form(default=""),
+-    file: UploadFile | None = File(default=None),
++    content: str = Form(...),
++    event_category: str = Form(default="academic"),
++    subject_id: str = Form(default=""),
++    group_name: str = Form(default=""),
++    global_scope: str = Form(default=""),
+ ) -> PostCreateResponse:
+-    file_path: str | None = None
+-    file_name: str | None = None
+-    if file and file.filename:
+-        data = await file.read()
+-        file_name = file.filename
+-        file_path = post_service.save_upload(batch_id, file.filename, data)
+-
+-    if not content.strip() and not file_name:
++    if not content.strip():
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+-            detail="Write a notice or attach a file",
++            detail="Write a notice to seed the knowledge graph",
+         )
+ 
+     return await post_service.create_post(
+         batch_id=batch_id,
+-        subject_id=subject_id,
++        subject_id=subject_id or None,
+         faculty=faculty,
+         content=content.strip(),
+-        file_name=file_name,
+-        file_path=file_path,
++        event_category=event_category,
++        group_name=group_name.strip() or None,
++        global_scope=global_scope.strip() or None,
+     )
+ 
+ 
+@@ -129,28 +138,24 @@ async def list_posts(
+ async def create_post_in_batch(
+     batch_id: str,
+     faculty: Annotated[AuthUser, Depends(require_faculty)],
+-    subject_id: str = Form(...),
+-    content: str = Form(default=""),
+-    file: UploadFile | None = File(default=None),
++    content: str = Form(...),
++    event_category: str = Form(default="academic"),
++    subject_id: str = Form(default=""),
++    group_name: str = Form(default=""),
++    global_scope: str = Form(default=""),
+ ) -> PostCreateResponse:
+-    file_path: str | None = None
+-    file_name: str | None = None
+-    if file and file.filename:
+-        data = await file.read()
+-        file_name = file.filename
+-        file_path = post_service.save_upload(batch_id, file.filename, data)
+-
+-    if not content.strip() and not file_name:
++    if not content.strip():
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+-            detail="Write a notice or attach a file",
++            detail="Write a notice to seed the knowledge graph",
+         )
+ 
+     return await post_service.create_post(
+         batch_id=batch_id,
+-        subject_id=subject_id,
++        subject_id=subject_id or None,
+         faculty=faculty,
+         content=content.strip(),
+-        file_name=file_name,
+-        file_path=file_path,
++        event_category=event_category,
++        group_name=group_name.strip() or None,
++        global_scope=global_scope.strip() or None,
+     )
+diff --git a/backend/app/api/v1/student/router.py b/backend/app/api/v1/student/router.py
+index ffb1bc6..c047d4d 100644
+--- a/backend/app/api/v1/student/router.py
++++ b/backend/app/api/v1/student/router.py
+@@ -1,18 +1,19 @@
+ import uuid
+ from typing import Annotated
+ 
+-from fastapi import APIRouter, Depends, File, UploadFile
++from fastapi import APIRouter, Depends
+ 
+ from app.api.deps import require_student
+ from app.core.security import AuthUser
+ from app.models.schemas import (
+     BatchDetail,
+     BatchResponse,
++    CampusGroupResponse,
+     FeedItem,
+-    JarvisUploadResponse,
+     PostSummary,
+     QueryChatRequest,
+     QueryChatResponse,
++    StudentSubjectResponse,
+     UserProfile,
+ )
+ from app.services import batch_service, feed_service, post_service
+@@ -35,6 +36,21 @@ async def student_feed(
+     return await feed_service.get_student_feed(student)
+ 
+ 
++@router.get("/subjects", response_model=list[StudentSubjectResponse])
++async def student_subjects(
++    student: Annotated[AuthUser, Depends(require_student)],
++) -> list[StudentSubjectResponse]:
++    return await batch_service.list_student_subjects(student)
++
++
++@router.get("/groups/{category}", response_model=list[CampusGroupResponse])
++async def student_groups(
++    category: str,
++    student: Annotated[AuthUser, Depends(require_student)],
++) -> list[CampusGroupResponse]:
++    return await batch_service.list_campus_groups(student, category)
++
++
+ @router.get("/batches", response_model=list[BatchResponse])
+ async def list_batches(
+     student: Annotated[AuthUser, Depends(require_student)],
+@@ -71,18 +87,3 @@ async def query_chat(
+         session_id=session_id,
+         sources=sources,
+     )
+-
+-
+-@router.post("/jarvis/upload", response_model=JarvisUploadResponse)
+-async def upload_screenshot(
+-    student: Annotated[AuthUser, Depends(require_student)],
+-    file: UploadFile = File(...),
+-) -> JarvisUploadResponse:
+-    return JarvisUploadResponse(
+-        message=(
+-            f"Jarvis upload ready for {student.full_name or student.email}. "
+-            f"Received '{file.filename}'. Phase 3 will run OCR and event extraction."
+-        ),
+-        extracted_text=None,
+-        event_id=None,
+-    )
+diff --git a/backend/app/config.py b/backend/app/config.py
+index f2669ab..0e88944 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -1,11 +1,14 @@
+ from functools import lru_cache
++from pathlib import Path
+ 
+ from pydantic_settings import BaseSettings, SettingsConfigDict
+ 
++_BACKEND_ENV = Path(__file__).resolve().parent.parent / ".env"
++
+ 
+ class Settings(BaseSettings):
+     model_config = SettingsConfigDict(
+-        env_file=".env",
++        env_file=str(_BACKEND_ENV),
+         env_file_encoding="utf-8",
+         extra="ignore",
+     )
+diff --git a/backend/app/models/schemas.py b/backend/app/models/schemas.py
+index 170bff4..df9c8a3 100644
+--- a/backend/app/models/schemas.py
++++ b/backend/app/models/schemas.py
+@@ -98,14 +98,32 @@ class QueryChatResponse(BaseModel):
+     answer: str
+     session_id: str
+     sources: list[dict[str, Any]] = Field(default_factory=list)
+-    phase: str = "Phase 2"
++    phase: str = "Knowledge Graph + RAG"
+ 
+ 
+-class JarvisUploadResponse(BaseModel):
+-    event_id: str | None = None
+-    extracted_text: str | None = None
+-    message: str
+-    phase: str = "Phase 3 ΓÇö not yet implemented"
++class EventCategory(str, Enum):
++    academic = "academic"
++    cultural = "cultural"
++    technical = "technical"
++    global_ = "global"
++
++
++class StudentSubjectResponse(BaseModel):
++    id: str
++    name: str
++    code: str
++    batch_id: str
++    batch_code: str | None = None
++
++
++class CampusGroupResponse(BaseModel):
++    name: str
++
++
++class CampusOptionsResponse(BaseModel):
++    clubs: list[str]
++    domains: list[str]
++    global_scopes: list[str]
+ 
+ 
+ class BatchCreate(BaseModel):
+@@ -168,12 +186,14 @@ class PostSummary(BaseModel):
+     id: str
+     content: str
+     post_type: str
++    event_category: str = "academic"
++    global_scope: str | None = None
++    group_name: str | None = None
+     subject_name: str | None = None
+     subject_code: str | None = None
+     batch_code: str | None = None
+     batch_name: str | None = None
+     due_date: str | None = None
+-    file_name: str | None = None
+     created_at: str | None = None
+ 
+ 
+@@ -182,10 +202,12 @@ class FeedItem(BaseModel):
+     title: str
+     content: str
+     item_type: str
++    event_category: str = "academic"
++    global_scope: str | None = None
++    group_name: str | None = None
+     subject_code: str | None = None
+     batch_code: str | None = None
+     due_date: str | None = None
+-    file_name: str | None = None
+     created_at: str | None = None
+ 
+ 
+diff --git a/backend/app/services/batch_service.py b/backend/app/services/batch_service.py
+index a768a9a..fef4205 100644
+--- a/backend/app/services/batch_service.py
++++ b/backend/app/services/batch_service.py
+@@ -4,9 +4,18 @@ from typing import Any
+ 
+ from fastapi import HTTPException, status
+ 
++from app.constants.campus import CAMPUS_CLUBS, CAMPUS_DOMAINS
+ from app.core.security import AuthUser
+ from app.db.neo4j import get_neo4j_driver
+-from app.models.schemas import BatchCreate, BatchDetail, BatchResponse, SubjectCreate, SubjectResponse
++from app.models.schemas import (
++    BatchCreate,
++    BatchDetail,
++    BatchResponse,
++    CampusGroupResponse,
++    StudentSubjectResponse,
++    SubjectCreate,
++    SubjectResponse,
++)
+ from app.utils.enrollment import normalize_enrollment_id
+ from app.utils.student_graph import STUDENT_MATCH, student_params
+ 
+@@ -139,6 +148,11 @@ async def add_subject(batch_id: str, faculty: AuthUser, payload: SubjectCreate)
+                 batch_id: $batch_id
+             })
+             MERGE (b)-[:HAS_SUBJECT]->(sub)
++            WITH b, sub
++            OPTIONAL MATCH (b)<-[:MEMBER_OF]-(s:Student)
++            FOREACH (_ IN CASE WHEN s IS NOT NULL THEN [1] ELSE [] END |
++                MERGE (s)-[:ENROLLED_IN]->(sub)
++            )
+             """,
+             batch_id=batch_id,
+             id=subject_id,
+@@ -169,6 +183,11 @@ async def add_student_to_batch(
+             MATCH (b:Batch {id: $batch_id})
+             MERGE (s:Student {enrollment_id: $enrollment_id})
+             MERGE (s)-[:MEMBER_OF]->(b)
++            WITH s, b
++            OPTIONAL MATCH (b)-[:HAS_SUBJECT]->(sub:Subject)
++            FOREACH (_ IN CASE WHEN sub IS NOT NULL THEN [1] ELSE [] END |
++                MERGE (s)-[:ENROLLED_IN]->(sub)
++            )
+             RETURN s.enrollment_id AS id
+             """,
+             batch_id=batch_id,
+@@ -197,8 +216,10 @@ async def remove_student_from_batch(
+     async with driver.session() as session:
+         result = await session.run(
+             """
+-            MATCH (b:Batch {id: $batch_id})<-[r:MEMBER_OF]-(s:Student {enrollment_id: $enrollment_id})
+-            DELETE r
++            MATCH (b:Batch {id: $batch_id})<-[m:MEMBER_OF]-(s:Student {enrollment_id: $enrollment_id})
++            OPTIONAL MATCH (b)-[:HAS_SUBJECT]->(sub:Subject)
++            OPTIONAL MATCH (s)-[e:ENROLLED_IN]->(sub)
++            DELETE e, m
+             RETURN s.enrollment_id AS id
+             """,
+             batch_id=batch_id,
+@@ -281,6 +302,61 @@ async def _assert_batch_access(batch_id: str, user: AuthUser) -> None:
+             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Batch access denied")
+ 
+ 
++async def list_student_subjects(student: AuthUser) -> list[StudentSubjectResponse]:
++    driver = get_neo4j_driver()
++    async with driver.session() as session:
++        await session.run(
++            f"""
++            {STUDENT_MATCH}
++            MATCH (s)-[:MEMBER_OF]->(b:Batch)
++            MATCH (b)-[:HAS_SUBJECT]->(sub:Subject)
++            MERGE (s)-[:ENROLLED_IN]->(sub)
++            """,
++            **student_params(student),
++        )
++        result = await session.run(
++            f"""
++            {STUDENT_MATCH}
++            MATCH (s)-[:ENROLLED_IN]->(sub:Subject)
++            OPTIONAL MATCH (b:Batch)-[:HAS_SUBJECT]->(sub)
++            RETURN DISTINCT sub.id AS id,
++                   sub.name AS name,
++                   sub.code AS code,
++                   sub.batch_id AS batch_id,
++                   b.code AS batch_code
++            ORDER BY sub.code
++            """,
++            **student_params(student),
++        )
++        records = await result.data()
++    return [StudentSubjectResponse(**r) for r in records if r.get("id")]
++
++
++async def list_campus_groups(student: AuthUser, category: str) -> list[CampusGroupResponse]:
++    if category not in ("cultural", "technical"):
++        return []
++    driver = get_neo4j_driver()
++    async with driver.session() as session:
++        result = await session.run(
++            f"""
++            {STUDENT_MATCH}
++            MATCH (s)-[:MEMBER_OF]->(b:Batch)
++            MATCH (p:Post)-[:FOR_BATCH]->(b)
++            WHERE p.event_category = $category AND coalesce(p.group_name, '') <> ''
++            RETURN DISTINCT p.group_name AS name
++            ORDER BY name
++            """,
++            category=category,
++            **student_params(student),
++        )
++        records = await result.data()
++    from_posts = [CampusGroupResponse(name=r["name"]) for r in records if r.get("name")]
++    if from_posts:
++        return from_posts
++    defaults = CAMPUS_CLUBS if category == "cultural" else CAMPUS_DOMAINS
++    return [CampusGroupResponse(name=name) for name in defaults]
++
++
+ def _batch_from_record(record: dict[str, Any]) -> BatchResponse:
+     batch = record["b"]
+     return BatchResponse(
+diff --git a/backend/app/services/feed_service.py b/backend/app/services/feed_service.py
+index dbbfe02..14fb82c 100644
+--- a/backend/app/services/feed_service.py
++++ b/backend/app/services/feed_service.py
+@@ -4,6 +4,24 @@ from app.models.schemas import FeedItem
+ from app.utils.student_graph import STUDENT_MATCH, student_params
+ 
+ 
++def _feed_item_from_post(raw: dict) -> FeedItem | None:
++    if not raw or not raw.get("id"):
++        return None
++    return FeedItem(
++        id=raw["id"],
++        title=raw.get("title") or raw.get("content") or "",
++        content=raw.get("content") or "",
++        item_type=raw.get("item_type") or "notice",
++        event_category=raw.get("event_category") or "academic",
++        global_scope=raw.get("global_scope") or None,
++        group_name=raw.get("group_name") or None,
++        subject_code=raw.get("subject_code"),
++        batch_code=raw.get("batch_code"),
++        due_date=raw.get("due_date") or None,
++        created_at=raw.get("created_at"),
++    )
++
++
+ async def get_student_feed(student: AuthUser) -> list[FeedItem]:
+     driver = get_neo4j_driver()
+     async with driver.session() as session:
+@@ -15,40 +33,32 @@ async def get_student_feed(student: AuthUser) -> list[FeedItem]:
+             OPTIONAL MATCH (p)-[:FOR_SUBJECT]->(sub:Subject)
+             OPTIONAL MATCH (e:Event)-[:IN_BATCH]->(b)
+             OPTIONAL MATCH (e)-[:BELONGS_TO]->(sub2:Subject)
+-            OPTIONAL MATCH (r:Resource)-[:FOR_BATCH]->(b)
+-            RETURN collect(DISTINCT {
++            RETURN collect(DISTINCT {{
+                 id: p.id,
+                 title: coalesce(p.title, p.content),
+                 content: p.content,
+                 item_type: p.post_type,
++                event_category: coalesce(p.event_category, 'academic'),
++                global_scope: p.global_scope,
++                group_name: p.group_name,
+                 subject_code: sub.code,
+                 batch_code: b.code,
+                 due_date: p.due_date,
+-                file_name: p.file_name,
+                 created_at: toString(p.created_at)
+-            }) AS posts,
+-            collect(DISTINCT {
++            }}) AS posts,
++            collect(DISTINCT {{
+                 id: e.id,
+                 title: e.title,
+                 content: e.summary,
+                 item_type: e.event_type,
++                event_category: coalesce(e.event_category, 'academic'),
++                global_scope: null,
++                group_name: null,
+                 subject_code: sub2.code,
+                 batch_code: b.code,
+                 due_date: e.due_date,
+-                file_name: null,
+                 created_at: toString(e.created_at)
+-            }) AS events,
+-            collect(DISTINCT {
+-                id: r.id,
+-                title: r.title,
+-                content: r.file_name,
+-                item_type: 'resource',
+-                subject_code: null,
+-                batch_code: b.code,
+-                due_date: null,
+-                file_name: r.file_name,
+-                created_at: toString(r.created_at)
+-            }) AS resources
++            }}) AS events
+             """,
+             **student_params(student),
+         )
+@@ -58,11 +68,14 @@ async def get_student_feed(student: AuthUser) -> list[FeedItem]:
+     if not record:
+         return items
+ 
+-    for group in ("posts", "events", "resources"):
++    seen: set[str] = set()
++    for group in ("posts", "events"):
+         for raw in record[group] or []:
+-            if not raw or not raw.get("id"):
++            item = _feed_item_from_post(raw)
++            if not item or item.id in seen:
+                 continue
+-            items.append(FeedItem(**raw))
++            seen.add(item.id)
++            items.append(item)
+ 
+     items.sort(key=lambda x: x.created_at or "", reverse=True)
+     return items
+@@ -80,10 +93,12 @@ async def get_faculty_feed(faculty: AuthUser) -> list[FeedItem]:
+                    coalesce(p.title, p.content) AS title,
+                    p.content AS content,
+                    p.post_type AS item_type,
++                   coalesce(p.event_category, 'academic') AS event_category,
++                   p.global_scope AS global_scope,
++                   p.group_name AS group_name,
+                    sub.code AS subject_code,
+                    b.code AS batch_code,
+                    p.due_date AS due_date,
+-                   p.file_name AS file_name,
+                    toString(p.created_at) AS created_at
+             ORDER BY p.created_at DESC
+             LIMIT 50
+@@ -92,4 +107,4 @@ async def get_faculty_feed(faculty: AuthUser) -> list[FeedItem]:
+         )
+         records = await result.data()
+ 
+-    return [FeedItem(**r) for r in records if r.get("id")]
++    return [_feed_item_from_post(r) for r in records if _feed_item_from_post(r)]
+diff --git a/backend/app/services/post_service.py b/backend/app/services/post_service.py
+index 82de54f..19616da 100644
+--- a/backend/app/services/post_service.py
++++ b/backend/app/services/post_service.py
+@@ -1,12 +1,10 @@
+ import logging
+-import re
+ import uuid
+ from difflib import get_close_matches
+-from pathlib import Path
+ 
+ from pydantic import BaseModel, Field
+ 
+-from app.config import get_settings
++from app.constants.campus import CAMPUS_CLUBS, CAMPUS_DOMAINS, GLOBAL_SCOPES
+ from app.core.llm import get_chat_model
+ from app.core.security import AuthUser
+ from app.db.neo4j import get_neo4j_driver
+@@ -15,6 +13,8 @@ from app.services.batch_service import get_batch_subjects, _assert_faculty_owns_
+ 
+ logger = logging.getLogger(__name__)
+ 
++VALID_EVENT_CATEGORIES = frozenset({"academic", "cultural", "technical", "global"})
++
+ 
+ class ParsedNotice(BaseModel):
+     subject_code: str | None = Field(
+@@ -25,6 +25,13 @@ class ParsedNotice(BaseModel):
+     post_type: str = Field(
+         description="One of: exam, assignment, notice, resource",
+     )
++    event_category: str = Field(
++        description="One of: academic, cultural, technical, global",
++    )
++    group_name: str | None = Field(
++        default=None,
++        description="Club name for cultural or domain name for technical notices",
++    )
+     title: str = Field(description="Short title for the notice or event")
+     due_date: str | None = Field(
+         default=None,
+@@ -33,6 +40,11 @@ class ParsedNotice(BaseModel):
+     summary: str = Field(description="One sentence summary of the notice")
+ 
+ 
++def _normalize_event_category(value: str) -> str:
++    normalized = value.lower().strip()
++    return normalized if normalized in VALID_EVENT_CATEGORIES else "academic"
++
++
+ def _match_subject(
+     parsed: ParsedNotice,
+     subjects: list[SubjectResponse],
+@@ -71,7 +83,6 @@ def _match_subject(
+         if close:
+             return name_map[close[0]]
+ 
+-    # Try matching from title/summary text
+     haystack = f"{parsed.title} {parsed.summary}".lower()
+     for sub in subjects:
+         if sub.code.lower() in haystack or sub.name.lower() in haystack:
+@@ -85,12 +96,17 @@ async def parse_notice(
+     batch_name: str,
+     batch_code: str,
+     subjects: list[SubjectResponse],
++    event_category: str = "academic",
++    group_name: str | None = None,
+ ) -> ParsedNotice:
+     subject_list = ", ".join(f"{s.code} ({s.name})" for s in subjects) or "none yet"
++    category = _normalize_event_category(event_category)
+ 
+-    prompt = f"""Parse this academic notice for batch "{batch_name}" ({batch_code}).
++    prompt = f"""Parse this campus notice for batch "{batch_name}" ({batch_code}).
+ 
+ Available subjects in this batch: {subject_list}
++Faculty-selected category: {category}
++Faculty-selected group (club/domain): {group_name or "infer from notice"}
+ 
+ Notice text:
+ \"\"\"
+@@ -98,40 +114,101 @@ Notice text:
+ \"\"\"
+ 
+ Rules:
+-- Match subject by code or name (CN = Computer Networks, SE = Software Engineering, etc.)
++- event_category: academic | cultural | technical | global
++  - academic: exams, assignments, subject notices, syllabus, resources
++  - cultural: fests, cultural events, dance, music, celebrations, sports meets
++  - technical: hackathons, tech fests, workshops, seminars, coding competitions, tech talks
++  - global: campus-wide updates, holidays, admin notices, general announcements
++- group_name: club name (cultural) or domain name (technical), e.g. "Dance Club", "AI & ML"
++- Match subject by code or name when the notice is academic (CN = Computer Networks, etc.)
+ - post_type: exam | assignment | notice | resource
+ - Extract due_date as YYYY-MM-DD when a date is mentioned (e.g. 15th July 2026 ΓåÆ 2026-07-15)
+-- If only a document/resource is mentioned with no deadline, use post_type=resource
+ """
+ 
+     llm = get_chat_model()
+     structured = llm.with_structured_output(ParsedNotice)
+     try:
+-        return structured.invoke(prompt)
++        parsed = structured.invoke(prompt)
++        parsed.event_category = _normalize_event_category(parsed.event_category or category)
++        if group_name and not parsed.group_name:
++            parsed.group_name = group_name.strip()
++        return parsed
+     except Exception as exc:  # noqa: BLE001
+         logger.warning("Structured parse failed, using fallback: %s", exc)
+         return ParsedNotice(
+             post_type="notice",
++            event_category=category,
+             title=content[:80],
+             summary=content,
+         )
+ 
+ 
++def _validate_post_fields(
++    category: str,
++    group_name: str | None,
++    global_scope: str | None,
++) -> tuple[str | None, str | None]:
++    from fastapi import HTTPException, status
++
++    scope: str | None = None
++    group: str | None = None
++
++    if category == "academic":
++        return None, None
++    if category == "cultural":
++        if not group_name or group_name not in CAMPUS_CLUBS:
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail="Select a valid club from the list",
++            )
++        return None, group_name
++    if category == "technical":
++        if not group_name or group_name not in CAMPUS_DOMAINS:
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail="Select a valid domain from the list",
++            )
++        return None, group_name
++    if category == "global":
++        if not global_scope or global_scope not in GLOBAL_SCOPES:
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail="Select global scope: academic, cultural, or technical",
++            )
++        return global_scope, None
++    return scope, group
++
++
+ async def create_post(
+     batch_id: str,
+-    subject_id: str,
++    subject_id: str | None,
+     faculty: AuthUser,
+     content: str,
+-    file_name: str | None = None,
+-    file_path: str | None = None,
++    event_category: str = "academic",
++    group_name: str | None = None,
++    global_scope: str | None = None,
+ ) -> PostCreateResponse:
+     await _assert_faculty_owns_batch(batch_id, faculty.id)
++    category = _normalize_event_category(event_category)
++    validated_scope, validated_group = _validate_post_fields(category, group_name, global_scope)
++    group_name = validated_group
++    global_scope = validated_scope
+     subjects = await get_batch_subjects(batch_id)
+-    subject = next((s for s in subjects if s.id == subject_id), None)
+-    if not subject:
++
++    subject: SubjectResponse | None = None
++    if subject_id:
++        subject = next((s for s in subjects if s.id == subject_id), None)
++        if not subject:
++            from fastapi import HTTPException, status
++
++            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject for batch")
++    elif category == "academic":
+         from fastapi import HTTPException, status
+ 
+-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject for batch")
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail="Subject is required for academic notices",
++        )
+ 
+     driver = get_neo4j_driver()
+     async with driver.session() as session:
+@@ -144,18 +221,25 @@ async def create_post(
+             raise ValueError("Batch not found")
+ 
+     parsed = await parse_notice(
+-        content=content or (file_name or "Uploaded resource"),
++        content=content,
+         batch_name=batch_record["name"],
+         batch_code=batch_record["code"],
+-        subjects=[subject],
++        subjects=subjects if subjects else ([subject] if subject else []),
++        event_category=category,
++        group_name=group_name,
+     )
++    parsed.event_category = category
++    if group_name:
++        parsed.group_name = group_name.strip()
++
++    if category == "academic" and not subject:
++        subject = _match_subject(parsed, subjects)
+ 
+     post_id = str(uuid.uuid4())
+     event_id: str | None = None
+-    resource_id: str | None = None
+     post_type = parsed.post_type.lower()
+-    if file_path and post_type not in ("exam", "assignment"):
+-        post_type = "resource"
++    if category != "academic" and post_type == "resource":
++        post_type = "notice"
+ 
+     async with driver.session() as session:
+         await session.run(
+@@ -166,8 +250,9 @@ async def create_post(
+                 id: $post_id,
+                 content: $content,
+                 post_type: $post_type,
+-                file_name: $file_name,
+-                file_path: $file_path,
++                event_category: $event_category,
++                global_scope: $global_scope,
++                group_name: $group_name,
+                 title: $title,
+                 due_date: $due_date,
+                 created_at: datetime()
+@@ -180,8 +265,9 @@ async def create_post(
+             post_id=post_id,
+             content=content,
+             post_type=post_type,
+-            file_name=file_name or "",
+-            file_path=file_path or "",
++            event_category=parsed.event_category,
++            global_scope=global_scope or "",
++            group_name=parsed.group_name or "",
+             title=parsed.title,
+             due_date=parsed.due_date or "",
+         )
+@@ -196,8 +282,13 @@ async def create_post(
+                 subject_id=subject.id,
+             )
+ 
+-        if post_type in ("exam", "assignment") or parsed.due_date:
++        if post_type in ("exam", "assignment") or parsed.due_date or category in (
++            "cultural",
++            "technical",
++            "global",
++        ):
+             event_id = str(uuid.uuid4())
++            event_type = post_type if post_type in ("exam", "assignment") else category
+             await session.run(
+                 """
+                 MATCH (p:Post {id: $post_id}), (b:Batch {id: $batch_id})
+@@ -205,6 +296,7 @@ async def create_post(
+                     id: $event_id,
+                     title: $title,
+                     event_type: $event_type,
++                    event_category: $event_category,
+                     due_date: $due_date,
+                     summary: $summary,
+                     created_at: datetime()
+@@ -221,50 +313,23 @@ async def create_post(
+                 batch_id=batch_id,
+                 event_id=event_id,
+                 title=parsed.title,
+-                event_type=post_type if post_type in ("exam", "assignment") else "deadline",
++                event_type=event_type,
++                event_category=parsed.event_category,
+                 due_date=parsed.due_date or "",
+                 summary=parsed.summary,
+                 subject_id=subject.id if subject else "",
+             )
+ 
+-        if file_path or post_type == "resource":
+-            resource_id = str(uuid.uuid4())
+-            await session.run(
+-                """
+-                MATCH (p:Post {id: $post_id}), (b:Batch {id: $batch_id})
+-                CREATE (r:Resource {
+-                    id: $resource_id,
+-                    title: $title,
+-                    file_name: $file_name,
+-                    file_path: $file_path,
+-                    created_at: datetime()
+-                })
+-                MERGE (r)-[:FROM_POST]->(p)
+-                MERGE (r)-[:FOR_BATCH]->(b)
+-                WITH r
+-                OPTIONAL MATCH (sub:Subject {id: $subject_id})
+-                FOREACH (_ IN CASE WHEN sub IS NOT NULL THEN [1] ELSE [] END |
+-                    MERGE (r)-[:FOR_SUBJECT]->(sub)
+-                )
+-                """,
+-                post_id=post_id,
+-                batch_id=batch_id,
+-                resource_id=resource_id,
+-                title=parsed.title or file_name or "Resource",
+-                file_name=file_name or "",
+-                file_path=file_path or "",
+-                subject_id=subject.id if subject else "",
+-            )
+-
+     parsed_dict = parsed.model_dump()
+-    parsed_dict["matched_subject"] = {"code": subject.code, "name": subject.name}
++    if subject:
++        parsed_dict["matched_subject"] = {"code": subject.code, "name": subject.name}
+ 
+     return PostCreateResponse(
+         post_id=post_id,
+-        message=f"Post created and graph seeded ({post_type})",
++        message=f"Notice seeded to knowledge graph ({parsed.event_category} ┬╖ {post_type})",
+         parsed=parsed_dict,
+         event_id=event_id,
+-        resource_id=resource_id,
++        resource_id=None,
+     )
+ 
+ 
+@@ -293,23 +358,15 @@ async def list_posts(batch_id: str) -> list[PostSummary]:
+                 id=p["id"],
+                 content=p.get("content", ""),
+                 post_type=p.get("post_type", "notice"),
++                event_category=p.get("event_category") or "academic",
++                global_scope=p.get("global_scope") or None,
++                group_name=p.get("group_name") or None,
+                 subject_name=r.get("subject_name"),
+                 subject_code=r.get("subject_code"),
+                 batch_code=r.get("batch_code"),
+                 batch_name=r.get("batch_name"),
+                 due_date=p.get("due_date") or None,
+-                file_name=p.get("file_name") or None,
+                 created_at=created_str,
+             )
+         )
+     return posts
+-
+-
+-def save_upload(batch_id: str, filename: str, data: bytes) -> str:
+-    settings = get_settings()
+-    safe_name = re.sub(r"[^\w.\-]", "_", filename)
+-    dest_dir = Path(settings.upload_dir) / "posts" / batch_id
+-    dest_dir.mkdir(parents=True, exist_ok=True)
+-    dest = dest_dir / f"{uuid.uuid4().hex}_{safe_name}"
+-    dest.write_bytes(data)
+-    return str(dest)
+diff --git a/backend/app/services/query_service.py b/backend/app/services/query_service.py
+index 8a9dddb..3826d9d 100644
+--- a/backend/app/services/query_service.py
++++ b/backend/app/services/query_service.py
+@@ -1,10 +1,6 @@
+ from typing import Any
+ 
+ from app.core.llm import get_chat_model
+-from app.core.security import AuthUser
+-from app.db.neo4j import get_neo4j_driver
+-
+-
+ from app.core.security import AuthUser
+ from app.db.neo4j import get_neo4j_driver
+ from app.utils.student_graph import STUDENT_MATCH, student_params
+@@ -22,7 +18,6 @@ async def fetch_student_context(user: AuthUser) -> list[dict[str, Any]]:
+             OPTIONAL MATCH (e)-[:BELONGS_TO]->(sub)
+             OPTIONAL MATCH (p:Post)-[:FOR_BATCH]->(b)
+             OPTIONAL MATCH (p)-[:FOR_SUBJECT]->(sub2:Subject)
+-            OPTIONAL MATCH (r:Resource)-[:FOR_BATCH]->(b)
+             RETURN DISTINCT
+                 b.name AS batch_name,
+                 b.code AS batch_code,
+@@ -30,14 +25,14 @@ async def fetch_student_context(user: AuthUser) -> list[dict[str, Any]]:
+                 sub.name AS subject_name,
+                 e.title AS event_title,
+                 e.event_type AS event_type,
++                e.event_category AS event_category,
+                 e.due_date AS due_date,
+                 e.summary AS event_summary,
+                 p.content AS post_content,
+                 p.title AS post_title,
+                 p.post_type AS post_type,
+-                p.due_date AS post_due_date,
+-                r.title AS resource_title,
+-                r.file_name AS resource_file
++                p.event_category AS post_category,
++                p.due_date AS post_due_date
+             ORDER BY due_date, batch_code, subject_code
+             """,
+             **student_params(user),
+@@ -59,9 +54,11 @@ async def answer_student_query(user: AuthUser, question: str) -> tuple[str, list
+     context_text = _format_context(context_rows)
+     sources = _build_sources(context_rows, question)
+ 
+-    prompt = f"""You are AcadMind, an academic assistant for Techno India University students.
+-Answer using ONLY the context below. If the answer is not in the context, say so clearly.
+-Include specific dates, subjects, and batch names when relevant. Be concise.
++    prompt = f"""You are Jarvis, AcadMind's campus knowledge assistant for Techno India University students.
++Answer using ONLY the context below from the Neo4j knowledge graph (faculty notices seeded as posts and events).
++Group your understanding across academic, cultural, and technical campus events when relevant.
++If the answer is not in the context, say so clearly.
++Include specific dates, subjects, event categories, and batch names when relevant. Be concise.
+ 
+ CONTEXT:
+ {context_text}
+@@ -83,12 +80,13 @@ def _format_context(rows: list[dict[str, Any]]) -> str:
+     for row in rows:
+         batch = f"{row.get('batch_name')} ({row.get('batch_code')})"
+         subj = row.get("subject_code") or row.get("subject_name") or "General"
+-        key = f"{batch}|{subj}|{row.get('event_title')}|{row.get('post_title')}"
++        category = row.get("event_category") or row.get("post_category") or "academic"
++        key = f"{batch}|{subj}|{category}|{row.get('event_title')}|{row.get('post_title')}"
+         if key in seen:
+             continue
+         seen.add(key)
+ 
+-        parts = [f"Batch: {batch}", f"Subject: {subj}"]
++        parts = [f"Batch: {batch}", f"Category: {category}", f"Subject: {subj}"]
+         if row.get("event_title"):
+             parts.append(
+                 f"Event [{row.get('event_type')}]: {row['event_title']} "
+@@ -99,10 +97,8 @@ def _format_context(rows: list[dict[str, Any]]) -> str:
+                 f"Notice [{row.get('post_type')}]: {row.get('post_title') or ''} "
+                 f"{row.get('post_content') or ''} (due: {row.get('post_due_date') or 'n/a'})"
+             )
+-        if row.get("resource_title"):
+-            parts.append(f"Resource: {row['resource_title']} ({row.get('resource_file')})")
+         lines.append(" | ".join(parts))
+-    return "\n".join(lines) if lines else "No notices yet."
++    return "\n".join(lines) if lines else "No notices seeded yet."
+ 
+ 
+ def _build_sources(rows: list[dict[str, Any]], question: str) -> list[dict[str, Any]]:
+@@ -111,24 +107,26 @@ def _build_sources(rows: list[dict[str, Any]], question: str) -> list[dict[str,
+     seen: set[str] = set()
+ 
+     for row in rows:
+-        title = row.get("event_title") or row.get("post_title") or row.get("resource_title")
++        title = row.get("event_title") or row.get("post_title")
+         if not title:
+             continue
+         subj = row.get("subject_code") or row.get("subject_name") or ""
+-        haystack = f"{title} {subj} {row.get('post_content', '')}".lower()
++        category = row.get("event_category") or row.get("post_category") or "academic"
++        haystack = f"{title} {subj} {category} {row.get('post_content', '')}".lower()
+         if not any(word in haystack for word in q.split() if len(word) > 3):
+             if row.get("due_date") or row.get("post_due_date"):
+-                pass  # include dated items
+-            elif "deadline" not in q and "exam" not in q and "assignment" not in q:
++                pass
++            elif not any(k in q for k in ("deadline", "exam", "assignment", "cultural", "technical", "fest", "hackathon")):
+                 continue
+ 
+-        key = f"{title}|{subj}"
++        key = f"{title}|{subj}|{category}"
+         if key in seen:
+             continue
+         seen.add(key)
+         sources.append(
+             {
+-                "type": row.get("event_type") or row.get("post_type") or "resource",
++                "type": row.get("event_type") or row.get("post_type") or "notice",
++                "category": category,
+                 "title": title,
+                 "subject": subj,
+                 "batch": row.get("batch_code"),
+diff --git a/backend/scripts/init_neo4j.cypher b/backend/scripts/init_neo4j.cypher
+index fac58cc..4fb1361 100644
+--- a/backend/scripts/init_neo4j.cypher
++++ b/backend/scripts/init_neo4j.cypher
+@@ -15,3 +15,5 @@ CREATE CONSTRAINT student_enrollment IF NOT EXISTS FOR (s:Student) REQUIRE s.enr
+ 
+ CREATE INDEX subject_name IF NOT EXISTS FOR (s:Subject) ON (s.name);
+ CREATE INDEX event_due_date IF NOT EXISTS FOR (ev:Event) ON (ev.due_date);
++CREATE INDEX post_event_category IF NOT EXISTS FOR (p:Post) ON (p.event_category);
++CREATE INDEX event_category IF NOT EXISTS FOR (ev:Event) ON (ev.event_category);
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index c215c8b..ce26bdb 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -670,9 +670,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -690,9 +687,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -710,9 +704,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -730,9 +721,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -750,9 +738,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -770,9 +755,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1076,9 +1058,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1096,9 +1075,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1116,9 +1092,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1136,9 +1109,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2447,9 +2417,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -2471,9 +2438,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -2495,9 +2459,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -2519,9 +2480,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+diff --git a/frontend/src/api/faculty.ts b/frontend/src/api/faculty.ts
+index 224c4fd..3e3aa75 100644
+--- a/frontend/src/api/faculty.ts
++++ b/frontend/src/api/faculty.ts
+@@ -61,12 +61,14 @@ export type PostSummary = {
+   id: string;
+   content: string;
+   post_type: string;
++  event_category: string;
++  global_scope: string | null;
++  group_name: string | null;
+   subject_name: string | null;
+   subject_code: string | null;
+   batch_code: string | null;
+   batch_name: string | null;
+   due_date: string | null;
+-  file_name: string | null;
+   created_at: string | null;
+ };
+ 
+@@ -75,10 +77,12 @@ export type FeedItem = {
+   title: string;
+   content: string;
+   item_type: string;
++  event_category: string;
++  global_scope: string | null;
++  group_name: string | null;
+   subject_code: string | null;
+   batch_code: string | null;
+   due_date: string | null;
+-  file_name: string | null;
+   created_at: string | null;
+ };
+ 
+@@ -147,18 +151,40 @@ export async function fetchBatchPosts(batchId: string): Promise<PostSummary[]> {
+   return response.json();
+ }
+ 
+-export async function createPost(
+-  batchId: string,
+-  subjectId: string,
+-  content: string,
+-  file: File | null,
+-) {
++export type CampusOptions = {
++  clubs: string[];
++  domains: string[];
++  global_scopes: string[];
++};
++
++export async function fetchCampusOptions(): Promise<CampusOptions> {
++  const response = await authFetch(`${PREFIX}/campus-options`);
++  return response.json();
++}
++
++export async function createPost({
++  batchId,
++  subjectId,
++  content,
++  eventCategory,
++  groupName = null,
++  globalScope = null,
++}: {
++  batchId: string;
++  subjectId: string | null;
++  content: string;
++  eventCategory: "academic" | "cultural" | "technical" | "global";
++  groupName?: string | null;
++  globalScope?: string | null;
++}) {
+   const token = await getAccessToken();
+   const formData = new FormData();
+   formData.append("batch_id", batchId);
+-  formData.append("subject_id", subjectId);
+   formData.append("content", content);
+-  if (file) formData.append("file", file);
++  formData.append("event_category", eventCategory);
++  if (subjectId) formData.append("subject_id", subjectId);
++  if (groupName) formData.append("group_name", groupName);
++  if (globalScope) formData.append("global_scope", globalScope);
+ 
+   const response = await fetch(`${API_BASE}${PREFIX}/posts`, {
+     method: "POST",
+diff --git a/frontend/src/api/student.ts b/frontend/src/api/student.ts
+index aa54ea1..8b69174 100644
+--- a/frontend/src/api/student.ts
++++ b/frontend/src/api/student.ts
+@@ -40,13 +40,27 @@ export type FeedItem = {
+   title: string;
+   content: string;
+   item_type: string;
++  event_category: string;
++  global_scope: string | null;
++  group_name: string | null;
+   subject_code: string | null;
+   batch_code: string | null;
+   due_date: string | null;
+-  file_name: string | null;
+   created_at: string | null;
+ };
+ 
++export type StudentSubject = {
++  id: string;
++  name: string;
++  code: string;
++  batch_id: string;
++  batch_code: string | null;
++};
++
++export type CampusGroup = {
++  name: string;
++};
++
+ export async function fetchProfile(token: string): Promise<UserProfile> {
+   const response = await fetch(`${API_BASE}${PREFIX}/me`, { headers: authHeaders(token) });
+   if (!response.ok) throw new Error(await response.text());
+@@ -67,6 +81,24 @@ export async function fetchBatches(): Promise<BatchResponse[]> {
+   return response.json();
+ }
+ 
++export async function fetchSubjects(): Promise<StudentSubject[]> {
++  const token = await getAccessToken();
++  const response = await fetch(`${API_BASE}${PREFIX}/subjects`, { headers: authHeaders(token) });
++  if (!response.ok) throw new Error(await response.text());
++  return response.json();
++}
++
++export async function fetchCampusGroups(
++  category: "cultural" | "technical",
++): Promise<CampusGroup[]> {
++  const token = await getAccessToken();
++  const response = await fetch(`${API_BASE}${PREFIX}/groups/${category}`, {
++    headers: authHeaders(token),
++  });
++  if (!response.ok) throw new Error(await response.text());
++  return response.json();
++}
++
+ export async function sendQuery(message: string, sessionId?: string) {
+   const token = await getAccessToken();
+   const response = await fetch(`${API_BASE}${PREFIX}/query/chat`, {
+@@ -78,15 +110,3 @@ export async function sendQuery(message: string, sessionId?: string) {
+   return response.json();
+ }
+ 
+-export async function uploadScreenshot(file: File) {
+-  const token = await getAccessToken();
+-  const formData = new FormData();
+-  formData.append("file", file);
+-  const response = await fetch(`${API_BASE}${PREFIX}/jarvis/upload`, {
+-    method: "POST",
+-    headers: authHeaders(token),
+-    body: formData,
+-  });
+-  if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
+-  return response.json();
+-}
+diff --git a/frontend/src/components/AuthPage.tsx b/frontend/src/components/AuthPage.tsx
+index 136c7f9..f08cc38 100644
+--- a/frontend/src/components/AuthPage.tsx
++++ b/frontend/src/components/AuthPage.tsx
+@@ -1,5 +1,6 @@
+ import { type FormEvent, useState } from "react";
+ import { useAuth } from "../contexts/AuthContext";
++import { STUDENT_PORTAL_NAME } from "../lib/branding";
+ 
+ type Mode = "signin" | "signup";
+ 
+@@ -65,7 +66,7 @@ export function AuthPage() {
+         <p className="mt-1 text-sm text-zinc-500">
+           {portal === "faculty"
+             ? "Manage batches & campus announcements"
+-            : "Access notices, deadlines & AI assistant"}
++            : `${STUDENT_PORTAL_NAME} ΓÇö campus notices & ASK Jarvis`}
+         </p>
+ 
+         <div className="mt-6 flex gap-2 rounded-xl bg-zinc-800/80 p-1">
+diff --git a/frontend/src/components/BatchDetail.tsx b/frontend/src/components/BatchDetail.tsx
+index 6f2c1c5..49b8a13 100644
+--- a/frontend/src/components/BatchDetail.tsx
++++ b/frontend/src/components/BatchDetail.tsx
+@@ -155,6 +155,9 @@ export function BatchDetail({ batchId, onBack }: Props) {
+                   <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-xs text-indigo-300">
+                     {p.post_type}
+                   </span>
++                  <span className="rounded-full bg-zinc-700/80 px-2 py-0.5 text-xs text-zinc-400">
++                    {p.event_category || "academic"}
++                  </span>
+                   {p.subject_code && (
+                     <span className="text-xs text-zinc-500">{p.subject_code}</span>
+                   )}
+@@ -162,7 +165,7 @@ export function BatchDetail({ batchId, onBack }: Props) {
+                     <span className="ml-auto text-xs text-amber-400">Due {p.due_date}</span>
+                   )}
+                 </div>
+-                <p className="mt-2 text-sm text-zinc-300">{p.content || p.file_name}</p>
++                <p className="mt-2 text-sm text-zinc-300">{p.content}</p>
+               </Card>
+             ))
+           )}
+@@ -233,7 +236,7 @@ export function BatchDetail({ batchId, onBack }: Props) {
+             <h4 className="font-medium text-zinc-100">Add student by ID</h4>
+             <p className="mt-1 text-xs text-zinc-500">
+               Enter the full 12-digit Student ID from signup (e.g. 231003003137). This links the
+-              student to the batch so they can see notices and ask AI about batch content.
++              student to the batch so they can see notices and ASK Jarvis about batch content.
+             </p>
+             <form onSubmit={handleAddStudent} className="mt-3 space-y-2">
+               <input
+diff --git a/frontend/src/components/CampusFeed.tsx b/frontend/src/components/CampusFeed.tsx
+index 996d25c..af8d837 100644
+--- a/frontend/src/components/CampusFeed.tsx
++++ b/frontend/src/components/CampusFeed.tsx
+@@ -6,18 +6,25 @@ export type FeedItem = {
+   title: string;
+   content: string;
+   item_type: string;
++  event_category: string;
++  group_name: string | null;
+   subject_code: string | null;
+   batch_code: string | null;
+   due_date: string | null;
+-  file_name: string | null;
+   created_at: string | null;
+ };
+ 
+-function typeVariant(t: string): "exam" | "assignment" | "resource" | "notice" | "default" {
++export type EventCategory = "academic" | "cultural" | "technical" | "global";
++
++function typeVariant(
++  t: string,
++): "exam" | "assignment" | "resource" | "notice" | "cultural" | "technical" | "default" {
+   if (t === "exam") return "exam";
+   if (t === "assignment") return "assignment";
+   if (t === "resource") return "resource";
+   if (t === "notice") return "notice";
++  if (t === "cultural") return "cultural";
++  if (t === "technical") return "technical";
+   return "default";
+ }
+ 
+@@ -26,7 +33,14 @@ function Badge({
+   variant = "default",
+ }: {
+   children: React.ReactNode;
+-  variant?: "default" | "exam" | "assignment" | "resource" | "notice";
++  variant?:
++    | "default"
++    | "exam"
++    | "assignment"
++    | "resource"
++    | "notice"
++    | "cultural"
++    | "technical";
+ }) {
+   const colors = {
+     default: "bg-indigo-500/20 text-indigo-300",
+@@ -34,6 +48,8 @@ function Badge({
+     assignment: "bg-amber-500/20 text-amber-300",
+     resource: "bg-emerald-500/20 text-emerald-300",
+     notice: "bg-sky-500/20 text-sky-300",
++    cultural: "bg-fuchsia-500/20 text-fuchsia-300",
++    technical: "bg-cyan-500/20 text-cyan-300",
+   };
+   return (
+     <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${colors[variant]}`}>
+@@ -42,12 +58,101 @@ function Badge({
+   );
+ }
+ 
++function FeedList({ items }: { items: FeedItem[] }) {
++  if (items.length === 0) {
++    return (
++      <Card className="p-6 text-center">
++        <p className="text-sm text-zinc-500">No announcements in this section yet.</p>
++      </Card>
++    );
++  }
++
++  return (
++    <div className="space-y-3">
++      {items.map((item) => {
++        const category = item.event_category || "academic";
++        const badgeVariant =
++          category === "cultural" || category === "technical"
++            ? typeVariant(category)
++            : typeVariant(item.item_type);
++
++        return (
++          <Card key={item.id} className="p-4">
++            <div className="flex flex-wrap items-center gap-2">
++              <Badge variant={badgeVariant}>{item.item_type}</Badge>
++              {category !== "academic" && (
++                <Badge variant={typeVariant(category)}>{category}</Badge>
++              )}
++              {item.batch_code && <span className="text-xs text-zinc-500">{item.batch_code}</span>}
++              {item.subject_code && (
++                <span className="text-xs font-medium text-indigo-400">{item.subject_code}</span>
++              )}
++              {item.due_date && (
++                <span className="ml-auto text-xs text-amber-400">Due {item.due_date}</span>
++              )}
++            </div>
++            <h4 className="mt-2 font-medium text-zinc-100">{item.title}</h4>
++            {item.content && item.content !== item.title && (
++              <p className="mt-1 text-sm text-zinc-400">{item.content}</p>
++            )}
++          </Card>
++        );
++      })}
++    </div>
++  );
++}
++
++function FeedSection({
++  title,
++  description,
++  items,
++}: {
++  title: string;
++  description: string;
++  items: FeedItem[];
++}) {
++  return (
++    <section>
++      <div className="mb-3">
++        <h3 className="text-base font-semibold text-zinc-100">{title}</h3>
++        <p className="text-xs text-zinc-500">{description}</p>
++      </div>
++      <FeedList items={items} />
++    </section>
++  );
++}
++
++const SECTIONS: { id: EventCategory; title: string; description: string }[] = [
++  {
++    id: "academic",
++    title: "Academic",
++    description: "Exams, assignments, subject notices & deadlines from faculty",
++  },
++  {
++    id: "cultural",
++    title: "Cultural Events",
++    description: "Fests, celebrations, sports & cultural campus activities",
++  },
++  {
++    id: "technical",
++    title: "Technical Events",
++    description: "Hackathons, workshops, tech fests & seminars",
++  },
++  {
++    id: "global",
++    title: "Global Updates",
++    description: "Campus-wide updates, holidays & admin notices",
++  },
++];
++
+ export function CampusFeed({
+   api,
+   refreshKey = 0,
++  sectioned = false,
+ }: {
+   api: "faculty" | "student";
+   refreshKey?: number;
++  sectioned?: boolean;
+ }) {
+   const [items, setItems] = useState<FeedItem[]>([]);
+   const [loading, setLoading] = useState(true);
+@@ -69,34 +174,19 @@ export function CampusFeed({
+ 
+   if (loading) return <p className="text-sm text-zinc-500">Loading campus feedΓÇª</p>;
+ 
+-  if (items.length === 0) {
+-    return (
+-      <Card className="p-8 text-center">
+-        <p className="text-zinc-500">No announcements yet.</p>
+-      </Card>
+-    );
++  if (!sectioned) {
++    return <FeedList items={items} />;
+   }
+ 
+   return (
+-    <div className="space-y-3">
+-      {items.map((item) => (
+-        <Card key={item.id} className="p-4">
+-          <div className="flex flex-wrap items-center gap-2">
+-            <Badge variant={typeVariant(item.item_type)}>{item.item_type}</Badge>
+-            {item.batch_code && <span className="text-xs text-zinc-500">{item.batch_code}</span>}
+-            {item.subject_code && (
+-              <span className="text-xs font-medium text-indigo-400">{item.subject_code}</span>
+-            )}
+-            {item.due_date && (
+-              <span className="ml-auto text-xs text-amber-400">Due {item.due_date}</span>
+-            )}
+-          </div>
+-          <h4 className="mt-2 font-medium text-zinc-100">{item.title}</h4>
+-          {item.content && item.content !== item.title && (
+-            <p className="mt-1 text-sm text-zinc-400">{item.content}</p>
+-          )}
+-          {item.file_name && <p className="mt-2 text-xs text-emerald-400">≡ƒôÄ {item.file_name}</p>}
+-        </Card>
++    <div className="space-y-8">
++      {SECTIONS.map((section) => (
++        <FeedSection
++          key={section.id}
++          title={section.title}
++          description={section.description}
++          items={items.filter((item) => (item.event_category || "academic") === section.id)}
++        />
+       ))}
+     </div>
+   );
+diff --git a/frontend/src/components/JarvisPanel.tsx b/frontend/src/components/JarvisPanel.tsx
+deleted file mode 100644
+index 35d829a..0000000
+--- a/frontend/src/components/JarvisPanel.tsx
++++ /dev/null
+@@ -1,60 +0,0 @@
+-import { type ChangeEvent, useRef, useState } from "react";
+-import { uploadScreenshot } from "../api/student";
+-import { Card } from "./ui/Card";
+-
+-export function JarvisPanel() {
+-  const [fileName, setFileName] = useState<string | null>(null);
+-  const [result, setResult] = useState<string | null>(null);
+-  const [loading, setLoading] = useState(false);
+-  const [error, setError] = useState<string | null>(null);
+-  const fileRef = useRef<HTMLInputElement>(null);
+-
+-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+-    const file = event.target.files?.[0];
+-    if (!file) return;
+-    setFileName(file.name);
+-    setLoading(true);
+-    setError(null);
+-    try {
+-      const response = await uploadScreenshot(file);
+-      setResult(response.message);
+-    } catch (err) {
+-      setError(err instanceof Error ? err.message : "Upload failed");
+-    } finally {
+-      setLoading(false);
+-    }
+-  }
+-
+-  return (
+-    <Card className="p-6">
+-      <header className="mb-4">
+-        <h2 className="text-lg font-semibold text-zinc-100">Jarvis Memory</h2>
+-        <p className="text-sm text-zinc-500">
+-          Upload screenshots from WhatsApp, email, or notice boards
+-        </p>
+-      </header>
+-
+-      <input
+-        ref={fileRef}
+-        type="file"
+-        accept="image/*"
+-        className="hidden"
+-        onChange={handleFileChange}
+-      />
+-      <button
+-        type="button"
+-        onClick={() => fileRef.current?.click()}
+-        disabled={loading}
+-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 bg-zinc-800/50 py-10 text-sm text-zinc-400 hover:border-sky-500/50 hover:text-sky-300"
+-      >
+-        <span className="text-xl">≡ƒôÄ</span>
+-        {loading ? "UploadingΓÇª" : fileName ?? "Upload screenshot"}
+-      </button>
+-
+-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+-      {result && (
+-        <div className="mt-4 rounded-xl bg-zinc-800/80 p-4 text-sm text-zinc-300">{result}</div>
+-      )}
+-    </Card>
+-  );
+-}
+diff --git a/frontend/src/components/PostComposer.tsx b/frontend/src/components/PostComposer.tsx
+index 51a5175..cabc75c 100644
+--- a/frontend/src/components/PostComposer.tsx
++++ b/frontend/src/components/PostComposer.tsx
+@@ -1,26 +1,44 @@
+-import { type FormEvent, useEffect, useRef, useState } from "react";
++import { type FormEvent, useEffect, useState } from "react";
+ import {
+   createPost,
+   fetchBatchDetail,
+   fetchBatches,
++  fetchCampusOptions,
+   type BatchResponse,
++  type CampusOptions,
+   type SubjectResponse,
+ } from "../api/faculty";
+ import { Card } from "./ui/Card";
+ 
++type EventCategory = "academic" | "cultural" | "technical" | "global";
++
++const CATEGORIES: { id: EventCategory; label: string; hint: string }[] = [
++  { id: "academic", label: "Academic", hint: "Select batch and subject" },
++  { id: "cultural", label: "Cultural", hint: "Select club from the list" },
++  { id: "technical", label: "Technical", hint: "Select domain from the list" },
++  { id: "global", label: "Global", hint: "Campus-wide ΓÇö select scope: academic, cultural, or technical" },
++];
++
++const selectClass =
++  "rounded-xl border border-zinc-700 bg-zinc-800/80 px-4 py-2.5 text-sm text-zinc-100 outline-none focus:border-indigo-500 disabled:opacity-50";
++
+ export function PostComposer({ onPosted }: { onPosted?: () => void }) {
+   const [batches, setBatches] = useState<BatchResponse[]>([]);
+   const [subjects, setSubjects] = useState<SubjectResponse[]>([]);
++  const [options, setOptions] = useState<CampusOptions | null>(null);
+   const [batchId, setBatchId] = useState("");
+   const [subjectId, setSubjectId] = useState("");
++  const [category, setCategory] = useState<EventCategory>("academic");
++  const [clubName, setClubName] = useState("");
++  const [domainName, setDomainName] = useState("");
++  const [globalScope, setGlobalScope] = useState("");
+   const [content, setContent] = useState("");
+-  const [file, setFile] = useState<File | null>(null);
+   const [loading, setLoading] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+-  const fileRef = useRef<HTMLInputElement>(null);
+ 
+   useEffect(() => {
+     fetchBatches().then(setBatches).catch(() => setBatches([]));
++    fetchCampusOptions().then(setOptions).catch(() => setOptions(null));
+   }, []);
+ 
+   useEffect(() => {
+@@ -37,23 +55,55 @@ export function PostComposer({ onPosted }: { onPosted?: () => void }) {
+       .catch(() => setSubjects([]));
+   }, [batchId]);
+ 
++  useEffect(() => {
++    setClubName("");
++    setDomainName("");
++    setGlobalScope("");
++    setSubjectId(subjects[0]?.id ?? "");
++  }, [category, subjects]);
++
+   async function handleSubmit(e: FormEvent) {
+     e.preventDefault();
+-    if (!batchId || !subjectId) {
+-      setError("Select batch and subject");
++    if (!batchId) {
++      setError("Select a batch");
++      return;
++    }
++    if (category === "academic" && !subjectId) {
++      setError("Select a subject");
+       return;
+     }
+-    if (!content.trim() && !file) {
+-      setError("Write something or attach a file");
++    if (category === "cultural" && !clubName) {
++      setError("Select a club");
+       return;
+     }
++    if (category === "technical" && !domainName) {
++      setError("Select a domain");
++      return;
++    }
++    if (category === "global" && !globalScope) {
++      setError("Select global scope: academic, cultural, or technical");
++      return;
++    }
++    if (!content.trim()) {
++      setError("Write a notice to seed the knowledge graph");
++      return;
++    }
++
+     setLoading(true);
+     setError(null);
+     try {
+-      await createPost(batchId, subjectId, content, file);
++      await createPost({
++        batchId,
++        subjectId: category === "academic" ? subjectId : null,
++        content,
++        eventCategory: category,
++        groupName: category === "cultural" ? clubName : category === "technical" ? domainName : null,
++        globalScope: category === "global" ? globalScope : null,
++      });
+       setContent("");
+-      setFile(null);
+-      if (fileRef.current) fileRef.current.value = "";
++      setClubName("");
++      setDomainName("");
++      setGlobalScope("");
+       onPosted?.();
+     } catch (err) {
+       setError(err instanceof Error ? err.message : "Failed to post");
+@@ -62,34 +112,59 @@ export function PostComposer({ onPosted }: { onPosted?: () => void }) {
+     }
+   }
+ 
++  const clubs = options?.clubs ?? [];
++  const domains = options?.domains ?? [];
++  const scopes = options?.global_scopes ?? [];
++
+   return (
+     <Card className="p-5">
+-      <h3 className="font-semibold text-zinc-100">Create announcement</h3>
++      <h3 className="font-semibold text-zinc-100">Post campus notice</h3>
+       <p className="mt-1 text-sm text-zinc-500">
+-        Like DigiCampus ΓÇö post notices, exams, assignments & resources
++        Faculty notices seed the Neo4j knowledge graph for student RAG queries
+       </p>
+ 
+       <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+-        <div className="grid gap-3 sm:grid-cols-2">
+-          <select
+-            value={batchId}
+-            onChange={(e) => setBatchId(e.target.value)}
+-            required
+-            className="rounded-xl border border-zinc-700 bg-zinc-800/80 px-4 py-2.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+-          >
+-            <option value="">Select batch</option>
+-            {batches.map((b) => (
+-              <option key={b.id} value={b.id}>
+-                {b.code} ΓÇö {b.name}
+-              </option>
+-            ))}
+-          </select>
++        <div className="flex flex-wrap gap-2">
++          {CATEGORIES.map((c) => (
++            <button
++              key={c.id}
++              type="button"
++              onClick={() => setCategory(c.id)}
++              className={`rounded-xl px-4 py-2 text-sm font-medium ${
++                category === c.id
++                  ? "bg-indigo-600 text-white"
++                  : "border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:text-zinc-200"
++              }`}
++            >
++              {c.label}
++            </button>
++          ))}
++        </div>
++        <p className="text-xs text-zinc-600">
++          {CATEGORIES.find((c) => c.id === category)?.hint}
++        </p>
++
++        <select
++          value={batchId}
++          onChange={(e) => setBatchId(e.target.value)}
++          required
++          className={`w-full ${selectClass}`}
++        >
++          <option value="">Select batch</option>
++          {batches.map((b) => (
++            <option key={b.id} value={b.id}>
++              {b.code} ΓÇö {b.name}
++            </option>
++          ))}
++        </select>
++
++        {category === "academic" && (
+           <select
+             value={subjectId}
+             onChange={(e) => setSubjectId(e.target.value)}
+             required
+             disabled={!batchId}
+-            className="rounded-xl border border-zinc-700 bg-zinc-800/80 px-4 py-2.5 text-sm text-zinc-100 outline-none focus:border-indigo-500 disabled:opacity-50"
++            className={`w-full ${selectClass}`}
+           >
+             <option value="">Select subject</option>
+             {subjects.map((s) => (
+@@ -98,42 +173,79 @@ export function PostComposer({ onPosted }: { onPosted?: () => void }) {
+               </option>
+             ))}
+           </select>
+-        </div>
++        )}
++
++        {category === "cultural" && (
++          <select
++            value={clubName}
++            onChange={(e) => setClubName(e.target.value)}
++            required
++            className={`w-full ${selectClass}`}
++          >
++            <option value="">Select club</option>
++            {clubs.map((club) => (
++              <option key={club} value={club}>
++                {club}
++              </option>
++            ))}
++          </select>
++        )}
++
++        {category === "technical" && (
++          <select
++            value={domainName}
++            onChange={(e) => setDomainName(e.target.value)}
++            required
++            className={`w-full ${selectClass}`}
++          >
++            <option value="">Select domain</option>
++            {domains.map((domain) => (
++              <option key={domain} value={domain}>
++                {domain}
++              </option>
++            ))}
++          </select>
++        )}
++
++        {category === "global" && (
++          <select
++            value={globalScope}
++            onChange={(e) => setGlobalScope(e.target.value)}
++            required
++            className={`w-full ${selectClass}`}
++          >
++            <option value="">Select scope</option>
++            {scopes.map((scope) => (
++              <option key={scope} value={scope}>
++                {scope.charAt(0).toUpperCase() + scope.slice(1)}
++              </option>
++            ))}
++          </select>
++        )}
+ 
+         <textarea
+           value={content}
+           onChange={(e) => setContent(e.target.value)}
+           rows={3}
+-          placeholder="CN exam on 15th July ┬╖ Assignment 4 of SE due 5th JuneΓÇª"
++          placeholder={
++            category === "academic"
++              ? "CN exam on 15th July ┬╖ SE Assignment 4 due 5th JuneΓÇª"
++              : category === "cultural"
++                ? "Annual cultural fest on 20th March at Main AuditoriumΓÇª"
++                : category === "technical"
++                  ? "Hackathon registration closes 10th AugustΓÇª"
++                  : "University closed on 15th August for Independence DayΓÇª"
++          }
+           className="w-full resize-none rounded-xl border border-zinc-700 bg-zinc-800/50 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500"
+         />
+ 
+-        {file && (
+-          <p className="text-xs text-indigo-300">≡ƒôÄ {file.name}</p>
+-        )}
+-
+-        <div className="flex items-center justify-between gap-3">
+-          <div className="flex gap-2">
+-            <input
+-              ref={fileRef}
+-              type="file"
+-              className="hidden"
+-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+-            />
+-            <button
+-              type="button"
+-              onClick={() => fileRef.current?.click()}
+-              className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm text-zinc-300 hover:border-indigo-500 hover:text-indigo-300"
+-            >
+-              <span>≡ƒôÄ</span> Upload
+-            </button>
+-          </div>
++        <div className="flex justify-end">
+           <button
+             type="submit"
+             disabled={loading}
+             className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+           >
+-            {loading ? "PublishingΓÇª" : "Post"}
++            {loading ? "Seeding graphΓÇª" : "Post notice"}
+           </button>
+         </div>
+ 
+diff --git a/frontend/src/components/QueryAssistantPanel.tsx b/frontend/src/components/QueryAssistantPanel.tsx
+index 206add5..104b26b 100644
+--- a/frontend/src/components/QueryAssistantPanel.tsx
++++ b/frontend/src/components/QueryAssistantPanel.tsx
+@@ -4,6 +4,7 @@ import { Card } from "./ui/Card";
+ 
+ type Source = {
+   type: string;
++  category?: string;
+   title: string;
+   subject?: string;
+   batch?: string;
+@@ -36,9 +37,10 @@ export function QueryAssistantPanel() {
+   return (
+     <Card className="p-6">
+       <header className="mb-4">
+-        <h2 className="text-lg font-semibold text-zinc-100">Ask AcadMind AI</h2>
++        <h2 className="text-lg font-semibold text-zinc-100">ASK Jarvis</h2>
+         <p className="text-sm text-zinc-500">
+-          Query deadlines, exams & assignments from your campus graph
++          RAG-powered answers from the campus knowledge graph ΓÇö academic, cultural & technical
++          notices seeded by faculty
+         </p>
+       </header>
+ 
+@@ -46,7 +48,7 @@ export function QueryAssistantPanel() {
+         <textarea
+           value={message}
+           onChange={(e) => setMessage(e.target.value)}
+-          placeholder="When is the CN exam? What's due this week?"
++          placeholder="When is the CN exam? Any hackathons this month? When is the cultural fest?"
+           rows={3}
+           className="input-dark w-full resize-none"
+         />
+@@ -55,7 +57,7 @@ export function QueryAssistantPanel() {
+           disabled={loading}
+           className="self-start rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+         >
+-          {loading ? "SearchingΓÇª" : "Ask"}
++          {loading ? "Searching graphΓÇª" : "ASK Jarvis"}
+         </button>
+       </form>
+ 
+@@ -70,6 +72,7 @@ export function QueryAssistantPanel() {
+           {sources.map((s, i) => (
+             <li key={i} className="rounded-lg bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
+               {s.title}
++              {s.category && ` ┬╖ ${s.category}`}
+               {s.subject && ` ┬╖ ${s.subject}`}
+               {s.due_date && ` ┬╖ due ${s.due_date}`}
+             </li>
+diff --git a/frontend/src/pages/FacultyApp.tsx b/frontend/src/pages/FacultyApp.tsx
+index 6897d97..faef556 100644
+--- a/frontend/src/pages/FacultyApp.tsx
++++ b/frontend/src/pages/FacultyApp.tsx
+@@ -73,7 +73,7 @@ function FacultyDashboard() {
+           </div>
+           <div className="lg:col-span-2">
+             <h2 className="mb-4 text-lg font-semibold text-zinc-100">Campus feed</h2>
+-            <CampusFeed api="faculty" refreshKey={feedKey} />
++            <CampusFeed api="faculty" refreshKey={feedKey} sectioned />
+           </div>
+         </div>
+       </div>
+diff --git a/frontend/src/pages/LandingPage.tsx b/frontend/src/pages/LandingPage.tsx
+index 0849e63..5f005d3 100644
+--- a/frontend/src/pages/LandingPage.tsx
++++ b/frontend/src/pages/LandingPage.tsx
+@@ -1,4 +1,5 @@
+ import { Link } from "react-router-dom";
++import { STUDENT_PORTAL_NAME } from "../lib/branding";
+ 
+ export function LandingPage() {
+   return (
+@@ -11,7 +12,8 @@ export function LandingPage() {
+           AcadMind
+         </h1>
+         <p className="mt-4 text-zinc-400">
+-          AI-powered campus platform ΓÇö notices, deadlines, resources & intelligent Q&A
++          Knowledge graph campus platform ΓÇö academic, cultural & technical notices with RAG-powered
++          ASK Jarvis
+         </p>
+ 
+         <div className="mt-12 grid gap-4 sm:grid-cols-2">
+@@ -22,7 +24,7 @@ export function LandingPage() {
+             <p className="text-sm font-semibold uppercase text-violet-400">Faculty</p>
+             <p className="mt-2 text-xl font-bold text-zinc-100">Campus Manager</p>
+             <p className="mt-2 text-sm text-zinc-500">
+-              Batches ┬╖ subjects ┬╖ announcements ┬╖ resources
++              Batches ┬╖ subjects ┬╖ academic, cultural & technical notices
+             </p>
+           </Link>
+ 
+@@ -31,9 +33,9 @@ export function LandingPage() {
+             className="group rounded-2xl border border-zinc-800 bg-zinc-900/80 p-8 transition hover:border-sky-500/50 hover:shadow-lg hover:shadow-sky-950/30"
+           >
+             <p className="text-sm font-semibold uppercase text-sky-400">Student</p>
+-            <p className="mt-2 text-xl font-bold text-zinc-100">DigiCampus</p>
++            <p className="mt-2 text-xl font-bold text-zinc-100">{STUDENT_PORTAL_NAME}</p>
+             <p className="mt-2 text-sm text-zinc-500">
+-              Feed ┬╖ deadlines ┬╖ AI assistant ┬╖ Jarvis
++              Campus feed ┬╖ subjects & events ┬╖ ASK Jarvis RAG
+             </p>
+           </Link>
+         </div>
+diff --git a/frontend/src/pages/StudentApp.tsx b/frontend/src/pages/StudentApp.tsx
+index 2063989..30fd754 100644
+--- a/frontend/src/pages/StudentApp.tsx
++++ b/frontend/src/pages/StudentApp.tsx
+@@ -1,16 +1,14 @@
+ import { useEffect, useState } from "react";
+-import { fetchBatches, type BatchResponse } from "../api/student";
+ import { AuthPage } from "../components/AuthPage";
+-import { CampusFeed } from "../components/CampusFeed";
+-import { JarvisPanel } from "../components/JarvisPanel";
+ import { QueryAssistantPanel } from "../components/QueryAssistantPanel";
++import { StudentCampusPanel } from "../components/StudentCampusPanel";
+ import { StatusBadge } from "../components/StatusBadge";
+ import { UserMenu } from "../components/UserMenu";
+-import { Card } from "../components/ui/Card";
+ import { AuthProvider, useAuth } from "../contexts/AuthContext";
+ import { fetchHealth, type HealthResponse } from "../api/client";
++import { STUDENT_PORTAL_NAME } from "../lib/branding";
+ 
+-type Tab = "campus" | "ai" | "jarvis";
++type Tab = "campus" | "jarvis";
+ 
+ function StudentShell({ children }: { children: React.ReactNode }) {
+   const { profileError, refreshProfile } = useAuth();
+@@ -28,7 +26,7 @@ function StudentShell({ children }: { children: React.ReactNode }) {
+             <p className="text-xs font-semibold uppercase tracking-wider text-sky-400">
+               AcadMind ┬╖ Student
+             </p>
+-            <h1 className="text-xl font-bold text-zinc-100">DigiCampus</h1>
++            <h1 className="text-xl font-bold text-zinc-100">{STUDENT_PORTAL_NAME}</h1>
+           </div>
+           <div className="flex items-center gap-4">
+             <StatusBadge health={health} error={null} />
+@@ -53,42 +51,11 @@ function StudentShell({ children }: { children: React.ReactNode }) {
+   );
+ }
+ 
+-function MyBatches() {
+-  const [batches, setBatches] = useState<BatchResponse[]>([]);
+-
+-  useEffect(() => {
+-    fetchBatches().then(setBatches).catch(() => setBatches([]));
+-  }, []);
+-
+-  if (batches.length === 0) {
+-    return (
+-      <Card className="p-6 text-center text-sm text-zinc-500">
+-        Not enrolled in any batch yet. Ask faculty to add your Student ID.
+-      </Card>
+-    );
+-  }
+-
+-  return (
+-    <div className="grid gap-3 sm:grid-cols-2">
+-      {batches.map((b) => (
+-        <Card key={b.id} className="p-4">
+-          <p className="text-xs font-semibold uppercase text-sky-400">{b.code}</p>
+-          <p className="font-medium text-zinc-100">{b.name}</p>
+-          <p className="mt-1 text-xs text-zinc-500">
+-            {b.subject_count} subjects ┬╖ Sem {b.semester}
+-          </p>
+-        </Card>
+-      ))}
+-    </div>
+-  );
+-}
+-
+ function StudentDashboard() {
+   const [tab, setTab] = useState<Tab>("campus");
+   const tabs: { id: Tab; label: string }[] = [
+     { id: "campus", label: "Campus" },
+-    { id: "ai", label: "Ask AI" },
+-    { id: "jarvis", label: "Jarvis" },
++    { id: "jarvis", label: "ASK Jarvis" },
+   ];
+ 
+   return (
+@@ -111,19 +78,12 @@ function StudentDashboard() {
+       </nav>
+ 
+       {tab === "campus" && (
+-        <div className="space-y-8">
+-          <section>
+-            <h2 className="mb-3 text-lg font-semibold text-zinc-100">My batches</h2>
+-            <MyBatches />
+-          </section>
+-          <section>
+-            <h2 className="mb-3 text-lg font-semibold text-zinc-100">Announcements & deadlines</h2>
+-            <CampusFeed api="student" />
+-          </section>
+-        </div>
++        <section>
++          <h2 className="mb-4 text-lg font-semibold text-zinc-100">Campus notices</h2>
++          <StudentCampusPanel />
++        </section>
+       )}
+-      {tab === "ai" && <QueryAssistantPanel />}
+-      {tab === "jarvis" && <JarvisPanel />}
++      {tab === "jarvis" && <QueryAssistantPanel />}
+     </StudentShell>
+   );
+ }

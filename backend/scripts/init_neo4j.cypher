@@ -15,3 +15,5 @@ CREATE CONSTRAINT student_enrollment IF NOT EXISTS FOR (s:Student) REQUIRE s.enr
 
 CREATE INDEX subject_name IF NOT EXISTS FOR (s:Subject) ON (s.name);
 CREATE INDEX event_due_date IF NOT EXISTS FOR (ev:Event) ON (ev.due_date);
+CREATE INDEX post_event_category IF NOT EXISTS FOR (p:Post) ON (p.event_category);
+CREATE INDEX event_category IF NOT EXISTS FOR (ev:Event) ON (ev.event_category);

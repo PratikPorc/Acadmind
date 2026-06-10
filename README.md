@@ -4,8 +4,8 @@
 
 AcadMind merges two complementary modules:
 
-- **Query Assistant** — RAG-powered institutional knowledge chat (Neo4j + LangChain/CrewAI)
-- **Jarvis** — Screenshot OCR, event extraction, reminders, NL-to-Cypher memory queries
+- **Campus Knowledge Graph** — Faculty notices seed Neo4j (academic, cultural & technical events)
+- **ASK Jarvis** — RAG-powered student queries over the knowledge graph (OCR/vision deferred)
 
 ## Repository Structure
 
@@ -133,8 +133,8 @@ App: http://localhost:5173
 |-------|-------|--------|
 | **0** | Monorepo scaffold, health checks, UI shell | ✅ Current |
 | **1** | Supabase auth, JWT middleware, profiles | Next |
-| **2** | Query Assistant + Neo4j seed + RAG agents | Planned |
-| **3** | Jarvis OCR + event extraction | Planned |
+| **2** | Knowledge graph seeding + ASK Jarvis RAG | Current |
+| **3** | OCR/vision upload (deferred) | Planned |
 | **4** | Unified graph + NL-to-Cypher | Planned |
 | **5** | Reminders + Celery + notifications | Planned |
 | **6** | Docker deploy + viva demo | Planned |
@@ -184,9 +184,7 @@ Free tier has rate limits — fine for MVP demos and viva; monitor usage in AI S
 | GET | `/api/v1/health` | Service health (Neo4j, Redis, Supabase, LLM) |
 | GET | `/api/v1/llm/status` | LLM provider configuration status |
 | GET | `/api/v1/auth/status` | Auth configuration status |
-| POST | `/api/v1/query/chat` | Query Assistant (stub → Phase 2) |
-| POST | `/api/v1/jarvis/upload` | Screenshot upload (stub → Phase 3) |
-| GET | `/api/v1/jarvis/events` | User events (stub → Phase 3) |
+| POST | `/api/v1/student/query/chat` | ASK Jarvis — RAG over knowledge graph |
 
 ---
 

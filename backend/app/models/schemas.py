@@ -98,14 +98,32 @@ class QueryChatResponse(BaseModel):
     answer: str
     session_id: str
     sources: list[dict[str, Any]] = Field(default_factory=list)
-    phase: str = "Phase 2"
+    phase: str = "Knowledge Graph + RAG"
 
 
-class JarvisUploadResponse(BaseModel):
-    event_id: str | None = None
-    extracted_text: str | None = None
-    message: str
-    phase: str = "Phase 3 — not yet implemented"
+class EventCategory(str, Enum):
+    academic = "academic"
+    cultural = "cultural"
+    technical = "technical"
+    global_ = "global"
+
+
+class StudentSubjectResponse(BaseModel):
+    id: str
+    name: str
+    code: str
+    batch_id: str
+    batch_code: str | None = None
+
+
+class CampusGroupResponse(BaseModel):
+    name: str
+
+
+class CampusOptionsResponse(BaseModel):
+    clubs: list[str]
+    domains: list[str]
+    global_scopes: list[str]
 
 
 class BatchCreate(BaseModel):
@@ -168,12 +186,14 @@ class PostSummary(BaseModel):
     id: str
     content: str
     post_type: str
+    event_category: str = "academic"
+    global_scope: str | None = None
+    group_name: str | None = None
     subject_name: str | None = None
     subject_code: str | None = None
     batch_code: str | None = None
     batch_name: str | None = None
     due_date: str | None = None
-    file_name: str | None = None
     created_at: str | None = None
 
 
@@ -182,10 +202,12 @@ class FeedItem(BaseModel):
     title: str
     content: str
     item_type: str
+    event_category: str = "academic"
+    global_scope: str | None = None
+    group_name: str | None = None
     subject_code: str | None = None
     batch_code: str | None = None
     due_date: str | None = None
-    file_name: str | None = None
     created_at: str | None = None
 
 

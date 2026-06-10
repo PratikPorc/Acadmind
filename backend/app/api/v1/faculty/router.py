@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, status
+from fastapi import APIRouter, Depends, Form, HTTPException, status
 
 from app.api.deps import require_faculty
 from app.core.security import AuthUser
@@ -10,12 +10,14 @@ from app.models.schemas import (
     BatchDetail,
     BatchResponse,
     FeedItem,
+    CampusOptionsResponse,
     PostCreateResponse,
     PostSummary,
     SubjectCreate,
     SubjectResponse,
     UserProfile,
 )
+from app.constants.campus import CAMPUS_CLUBS, CAMPUS_DOMAINS, GLOBAL_SCOPES
 from app.services import batch_service, feed_service, post_service
 from app.services.user_service import sync_user_to_graph, to_profile
 
@@ -35,34 +37,41 @@ async def faculty_feed(
     return await feed_service.get_faculty_feed(faculty)
 
 
+@router.get("/campus-options", response_model=CampusOptionsResponse)
+async def campus_options(
+    faculty: Annotated[AuthUser, Depends(require_faculty)],
+) -> CampusOptionsResponse:
+    return CampusOptionsResponse(
+        clubs=list(CAMPUS_CLUBS),
+        domains=list(CAMPUS_DOMAINS),
+        global_scopes=list(GLOBAL_SCOPES),
+    )
+
+
 @router.post("/posts", response_model=PostCreateResponse)
 async def create_post_global(
     faculty: Annotated[AuthUser, Depends(require_faculty)],
     batch_id: str = Form(...),
-    subject_id: str = Form(...),
-    content: str = Form(default=""),
-    file: UploadFile | None = File(default=None),
+    content: str = Form(...),
+    event_category: str = Form(default="academic"),
+    subject_id: str = Form(default=""),
+    group_name: str = Form(default=""),
+    global_scope: str = Form(default=""),
 ) -> PostCreateResponse:
-    file_path: str | None = None
-    file_name: str | None = None
-    if file and file.filename:
-        data = await file.read()
-        file_name = file.filename
-        file_path = post_service.save_upload(batch_id, file.filename, data)
-
-    if not content.strip() and not file_name:
+    if not content.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Write a notice or attach a file",
+            detail="Write a notice to seed the knowledge graph",
         )
 
     return await post_service.create_post(
         batch_id=batch_id,
-        subject_id=subject_id,
+        subject_id=subject_id or None,
         faculty=faculty,
         content=content.strip(),
-        file_name=file_name,
-        file_path=file_path,
+        event_category=event_category,
+        group_name=group_name.strip() or None,
+        global_scope=global_scope.strip() or None,
     )
 
 
@@ -129,28 +138,24 @@ async def list_posts(
 async def create_post_in_batch(
     batch_id: str,
     faculty: Annotated[AuthUser, Depends(require_faculty)],
-    subject_id: str = Form(...),
-    content: str = Form(default=""),
-    file: UploadFile | None = File(default=None),
+    content: str = Form(...),
+    event_category: str = Form(default="academic"),
+    subject_id: str = Form(default=""),
+    group_name: str = Form(default=""),
+    global_scope: str = Form(default=""),
 ) -> PostCreateResponse:
-    file_path: str | None = None
-    file_name: str | None = None
-    if file and file.filename:
-        data = await file.read()
-        file_name = file.filename
-        file_path = post_service.save_upload(batch_id, file.filename, data)
-
-    if not content.strip() and not file_name:
+    if not content.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Write a notice or attach a file",
+            detail="Write a notice to seed the knowledge graph",
         )
 
     return await post_service.create_post(
         batch_id=batch_id,
-        subject_id=subject_id,
+        subject_id=subject_id or None,
         faculty=faculty,
         content=content.strip(),
-        file_name=file_name,
-        file_path=file_path,
+        event_category=event_category,
+        group_name=group_name.strip() or None,
+        global_scope=global_scope.strip() or None,
     )
