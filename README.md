@@ -190,5 +190,5 @@ Free tier has rate limits — fine for MVP demos and viva; monitor usage in AI S
 
 ## Team
 
-Pratik Guha Roy · Swapnil Kobi · Eager Nandi · Sarthack Das · Reck Roy  
+Pratik Guha Roy · Swapnil Kobi · Srinjani Roy Chowdhury · Sarthack Das · Reck Roy  
 Techno India University, West Bengal — B.Tech CSE, 2024–2025
