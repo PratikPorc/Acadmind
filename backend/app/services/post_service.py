@@ -1,5 +1,4 @@
 import logging
-import uuid
 from difflib import get_close_matches
 
 from pydantic import BaseModel, Field
@@ -10,6 +9,7 @@ from app.core.security import AuthUser
 from app.db.neo4j import get_neo4j_driver
 from app.models.schemas import PostCreateResponse, PostSummary, SubjectResponse
 from app.services.batch_service import get_batch_subjects, _assert_faculty_owns_batch
+from app.services.knowledge_graph_service import NoticeGraphPayload, ingest_faculty_notice
 
 logger = logging.getLogger(__name__)
 
@@ -235,90 +235,23 @@ async def create_post(
     if category == "academic" and not subject:
         subject = _match_subject(parsed, subjects)
 
-    post_id = str(uuid.uuid4())
-    event_id: str | None = None
     post_type = parsed.post_type.lower()
     if category != "academic" and post_type == "resource":
         post_type = "notice"
 
-    async with driver.session() as session:
-        await session.run(
-            """
-            MATCH (b:Batch {id: $batch_id})
-            MATCH (f:Faculty {id: $faculty_id})
-            CREATE (p:Post {
-                id: $post_id,
-                content: $content,
-                post_type: $post_type,
-                event_category: $event_category,
-                global_scope: $global_scope,
-                group_name: $group_name,
-                title: $title,
-                due_date: $due_date,
-                created_at: datetime()
-            })
-            MERGE (p)-[:FOR_BATCH]->(b)
-            MERGE (p)-[:CREATED_BY]->(f)
-            """,
-            batch_id=batch_id,
-            faculty_id=faculty.id,
-            post_id=post_id,
-            content=content,
-            post_type=post_type,
-            event_category=parsed.event_category,
-            global_scope=global_scope or "",
-            group_name=parsed.group_name or "",
-            title=parsed.title,
-            due_date=parsed.due_date or "",
-        )
-
-        if subject:
-            await session.run(
-                """
-                MATCH (p:Post {id: $post_id}), (sub:Subject {id: $subject_id})
-                MERGE (p)-[:FOR_SUBJECT]->(sub)
-                """,
-                post_id=post_id,
-                subject_id=subject.id,
-            )
-
-        if post_type in ("exam", "assignment") or parsed.due_date or category in (
-            "cultural",
-            "technical",
-            "global",
-        ):
-            event_id = str(uuid.uuid4())
-            event_type = post_type if post_type in ("exam", "assignment") else category
-            await session.run(
-                """
-                MATCH (p:Post {id: $post_id}), (b:Batch {id: $batch_id})
-                CREATE (e:Event {
-                    id: $event_id,
-                    title: $title,
-                    event_type: $event_type,
-                    event_category: $event_category,
-                    due_date: $due_date,
-                    summary: $summary,
-                    created_at: datetime()
-                })
-                MERGE (e)-[:FROM_POST]->(p)
-                MERGE (e)-[:IN_BATCH]->(b)
-                WITH e, p
-                OPTIONAL MATCH (sub:Subject {id: $subject_id})
-                FOREACH (_ IN CASE WHEN sub IS NOT NULL THEN [1] ELSE [] END |
-                    MERGE (e)-[:BELONGS_TO]->(sub)
-                )
-                """,
-                post_id=post_id,
-                batch_id=batch_id,
-                event_id=event_id,
-                title=parsed.title,
-                event_type=event_type,
-                event_category=parsed.event_category,
-                due_date=parsed.due_date or "",
-                summary=parsed.summary,
-                subject_id=subject.id if subject else "",
-            )
+    graph_payload = NoticeGraphPayload(
+        batch_id=batch_id,
+        content=content,
+        title=parsed.title,
+        summary=parsed.summary,
+        post_type=post_type,
+        event_category=parsed.event_category,
+        global_scope=global_scope or "",
+        group_name=parsed.group_name or "",
+        due_date=parsed.due_date or "",
+        subject_id=subject.id if subject else None,
+    )
+    post_id, event_id = await ingest_faculty_notice(faculty, graph_payload)
 
     parsed_dict = parsed.model_dump()
     if subject:
@@ -326,7 +259,7 @@ async def create_post(
 
     return PostCreateResponse(
         post_id=post_id,
-        message=f"Notice seeded to knowledge graph ({parsed.event_category} · {post_type})",
+        message=f"Notice live in knowledge graph — students can ask Jarvis about “{parsed.title}”",
         parsed=parsed_dict,
         event_id=event_id,
         resource_id=None,

@@ -7,6 +7,7 @@ import {
   type FeedItem,
   type StudentSubject,
 } from "../api/student";
+import { useAuth } from "../contexts/AuthContext";
 import { Card } from "./ui/Card";
 
 type CampusTab = "academic" | "cultural" | "technical" | "global";
@@ -118,6 +119,7 @@ function Sidebar({
 }
 
 export function StudentCampusPanel() {
+  const { profile } = useAuth();
   const [tab, setTab] = useState<CampusTab>("academic");
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [subjects, setSubjects] = useState<StudentSubject[]>([]);
@@ -125,10 +127,14 @@ export function StudentCampusPanel() {
   const [domains, setDomains] = useState<CampusGroup[]>([]);
   const [filter, setFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!profile?.id) return;
+
     async function load() {
       setLoading(true);
+      setError(null);
       try {
         const [feedItems, subjectList, clubList, domainList] = await Promise.all([
           fetchFeed(),
@@ -140,17 +146,18 @@ export function StudentCampusPanel() {
         setSubjects(subjectList);
         setClubs(clubList);
         setDomains(domainList);
-      } catch {
+      } catch (err) {
         setFeed([]);
         setSubjects([]);
         setClubs([]);
         setDomains([]);
+        setError(err instanceof Error ? err.message : "Failed to load campus notices");
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, []);
+  }, [profile?.id]);
 
   useEffect(() => {
     setFilter(null);
@@ -200,6 +207,14 @@ export function StudentCampusPanel() {
 
   if (loading) {
     return <p className="text-sm text-zinc-500">Loading campus notices…</p>;
+  }
+
+  if (error) {
+    return (
+      <Card className="p-6 text-center">
+        <p className="text-sm text-red-400">{error}</p>
+      </Card>
+    );
   }
 
   return (

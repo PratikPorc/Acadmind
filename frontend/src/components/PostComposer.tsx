@@ -35,9 +35,16 @@ export function PostComposer({ onPosted }: { onPosted?: () => void }) {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchBatches().then(setBatches).catch(() => setBatches([]));
+    fetchBatches()
+      .then((list) => {
+        setBatches(list);
+        const demo = list.find((b) => b.code === "CSE6A") ?? list[0];
+        if (demo) setBatchId(demo.id);
+      })
+      .catch(() => setBatches([]));
     fetchCampusOptions().then(setOptions).catch(() => setOptions(null));
   }, []);
 
@@ -91,8 +98,9 @@ export function PostComposer({ onPosted }: { onPosted?: () => void }) {
 
     setLoading(true);
     setError(null);
+    setSuccess(null);
     try {
-      await createPost({
+      const result = await createPost({
         batchId,
         subjectId: category === "academic" ? subjectId : null,
         content,
@@ -104,6 +112,7 @@ export function PostComposer({ onPosted }: { onPosted?: () => void }) {
       setClubName("");
       setDomainName("");
       setGlobalScope("");
+      setSuccess(result.message ?? "Notice posted — Jarvis can answer questions about it.");
       onPosted?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to post");
@@ -250,6 +259,7 @@ export function PostComposer({ onPosted }: { onPosted?: () => void }) {
         </div>
 
         {error && <p className="text-sm text-red-400">{error}</p>}
+        {success && <p className="text-sm text-emerald-400">{success}</p>}
       </form>
     </Card>
   );

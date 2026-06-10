@@ -11,6 +11,7 @@ from app.db.neo4j import close_neo4j_driver, init_neo4j_driver
 from app.db.redis_client import close_redis, init_redis
 from app.middleware.api_gateway import ApiGatewayMiddleware
 from app.middleware.gateway_log_store import configure_gateway_log_store
+from app.services.demo_seed_service import seed_demo_once
 
 
 @asynccontextmanager
@@ -18,6 +19,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     init_neo4j_driver(settings)
     init_redis(settings)
+    if settings.demo_seed_enabled:
+        await seed_demo_once()
     yield
     await close_redis()
     await close_neo4j_driver()

@@ -18,6 +18,7 @@ from app.models.schemas import (
 )
 from app.utils.enrollment import normalize_enrollment_id
 from app.utils.student_graph import STUDENT_MATCH, student_params
+from app.services.demo_seed_service import ensure_demo_enrollment
 
 logger = logging.getLogger("acadmind.batch")
 
@@ -303,6 +304,7 @@ async def _assert_batch_access(batch_id: str, user: AuthUser) -> None:
 
 
 async def list_student_subjects(student: AuthUser) -> list[StudentSubjectResponse]:
+    await ensure_demo_enrollment(student.id, student.enrollment_id)
     driver = get_neo4j_driver()
     async with driver.session() as session:
         await session.run(

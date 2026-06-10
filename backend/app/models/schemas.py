@@ -37,6 +37,14 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class DemoSeedResponse(BaseModel):
+    batch_id: str
+    batch_code: str
+    posts_seeded: int
+    students_linked: int
+    message: str
+
+
 class GatewayLogEntrySchema(BaseModel):
     request_id: str
     method: str

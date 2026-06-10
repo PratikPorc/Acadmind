@@ -17,6 +17,7 @@ from app.models.schemas import (
     UserProfile,
 )
 from app.services import batch_service, feed_service, post_service
+from app.services.demo_seed_service import ensure_demo_enrollment
 from app.services.query_service import answer_student_query
 from app.services.user_service import sync_user_to_graph, to_profile
 
@@ -33,6 +34,7 @@ async def student_me(student: Annotated[AuthUser, Depends(require_student)]) -> 
 async def student_feed(
     student: Annotated[AuthUser, Depends(require_student)],
 ) -> list[FeedItem]:
+    await sync_user_to_graph(student)
     return await feed_service.get_student_feed(student)
 
 
@@ -40,6 +42,8 @@ async def student_feed(
 async def student_subjects(
     student: Annotated[AuthUser, Depends(require_student)],
 ) -> list[StudentSubjectResponse]:
+    await sync_user_to_graph(student)
+    await ensure_demo_enrollment(student.id, student.enrollment_id)
     return await batch_service.list_student_subjects(student)
 
 
@@ -48,6 +52,8 @@ async def student_groups(
     category: str,
     student: Annotated[AuthUser, Depends(require_student)],
 ) -> list[CampusGroupResponse]:
+    await sync_user_to_graph(student)
+    await ensure_demo_enrollment(student.id, student.enrollment_id)
     return await batch_service.list_campus_groups(student, category)
 
 
@@ -81,6 +87,8 @@ async def query_chat(
     student: Annotated[AuthUser, Depends(require_student)],
 ) -> QueryChatResponse:
     session_id = payload.session_id or str(uuid.uuid4())
+    await sync_user_to_graph(student)
+    await ensure_demo_enrollment(student.id, student.enrollment_id)
     answer, sources = await answer_student_query(student, payload.message)
     return QueryChatResponse(
         answer=answer,

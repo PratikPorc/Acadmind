@@ -39,8 +39,7 @@ export function QueryAssistantPanel() {
       <header className="mb-4">
         <h2 className="text-lg font-semibold text-zinc-100">ASK Jarvis</h2>
         <p className="text-sm text-zinc-500">
-          RAG-powered answers from the campus knowledge graph — academic, cultural & technical
-          notices seeded by faculty
+          Fast keyword search over your campus notices — academic, cultural, technical & global
         </p>
       </header>
 
@@ -57,7 +56,7 @@ export function QueryAssistantPanel() {
           disabled={loading}
           className="self-start rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
         >
-          {loading ? "Searching graph…" : "ASK Jarvis"}
+          {loading ? "Searching…" : "ASK Jarvis"}
         </button>
       </form>
 
@@ -69,8 +68,11 @@ export function QueryAssistantPanel() {
       )}
       {sources.length > 0 && (
         <ul className="mt-4 space-y-2">
-          {sources.map((s, i) => (
-            <li key={i} className="rounded-lg bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
+            {sources.map((s, i) => (
+            <li
+              key={`${s.title}-${s.due_date ?? i}`}
+              className="rounded-lg bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200"
+            >
               {s.title}
               {s.category && ` · ${s.category}`}
               {s.subject && ` · ${s.subject}`}

@@ -19,6 +19,7 @@ from app.models.schemas import (
 )
 from app.constants.campus import CAMPUS_CLUBS, CAMPUS_DOMAINS, GLOBAL_SCOPES
 from app.services import batch_service, feed_service, post_service
+from app.services.demo_seed_service import seed_demo_for_faculty_if_needed
 from app.services.user_service import sync_user_to_graph, to_profile
 
 router = APIRouter()
@@ -27,6 +28,7 @@ router = APIRouter()
 @router.get("/me", response_model=UserProfile)
 async def faculty_me(faculty: Annotated[AuthUser, Depends(require_faculty)]) -> UserProfile:
     await sync_user_to_graph(faculty)
+    await seed_demo_for_faculty_if_needed(faculty)
     return to_profile(faculty)
 
 
@@ -64,6 +66,7 @@ async def create_post_global(
             detail="Write a notice to seed the knowledge graph",
         )
 
+    await sync_user_to_graph(faculty)
     return await post_service.create_post(
         batch_id=batch_id,
         subject_id=subject_id or None,
@@ -150,6 +153,7 @@ async def create_post_in_batch(
             detail="Write a notice to seed the knowledge graph",
         )
 
+    await sync_user_to_graph(faculty)
     return await post_service.create_post(
         batch_id=batch_id,
         subject_id=subject_id or None,
